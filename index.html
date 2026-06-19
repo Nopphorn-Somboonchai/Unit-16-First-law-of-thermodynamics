@@ -35,6 +35,18 @@
             --muted: #64748b;
             --paper: rgba(255, 255, 255, 0.95);
             --line: rgba(30, 41, 59, 0.1);
+            --success: #a72828;
+        }
+
+        .total-questions-badge {
+            display: inline-block;
+            background-color: var(--success);
+            color: #fff;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-top: 10px;
+            font-size: 0.9em;
         }
 
         body {
@@ -617,6 +629,9 @@
             </div>
 
             <!-- Mode Selector -->
+            <div id="total-questions-display" class="total-questions-badge">
+                ข้อสอบในคลัง : <span id="total-count">0</span> ข้อ
+            </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <button onclick="startPracticeMode('16-4-1')" id="btn-prac-16-4-1"
                     class="p-4 bg-white hover:bg-red-50 text-slate-800 rounded-xl border border-slate-200 flex items-center gap-4 transition text-left shadow-sm hover:shadow">
@@ -2288,6 +2303,11 @@
                     }
                 } catch (e) { sessionStorage.removeItem(EXAM_STATE_KEY); }
             }
+
+            // นับจำนวนโจทย์ทั้งหมดใน array QUESTION_TEMPLATES
+            const totalQuestions = QUESTION_TEMPLATES.length;
+            // อัปเดตตัวเลขไปยัง HTML
+            document.getElementById('total-count').innerText = totalQuestions;
         };
     </script>
 </body>
