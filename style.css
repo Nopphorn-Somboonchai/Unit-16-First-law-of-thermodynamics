@@ -1,0 +1,94 @@
+:root {
+    --ink: #1e293b;
+    --muted: #64748b;
+    --paper: rgba(255, 255, 255, 0.95);
+    --line: rgba(30, 41, 59, 0.1);
+    --success: #a72828;
+}
+
+.total-questions-badge {
+    display: inline-block;
+    background-color: var(--success);
+    color: #fff;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-weight: bold;
+    margin-top: 10px;
+    font-size: 0.9em;
+}
+
+body {
+    font-family: 'Prompt', 'Sarabun', sans-serif;
+    color: var(--ink);
+    /* Warm Theme for Thermodynamics */
+    background:
+        linear-gradient(135deg, rgba(249, 115, 22, 0.08), transparent 30%),
+        linear-gradient(225deg, rgba(239, 68, 68, 0.05), transparent 35%),
+        repeating-linear-gradient(0deg, rgba(30, 41, 59, 0.02) 0 1px, transparent 1px 30px),
+        repeating-linear-gradient(90deg, rgba(30, 41, 59, 0.02) 0 1px, transparent 1px 30px),
+        #fffaf5;
+    text-rendering: optimizeLegibility;
+}
+
+html.exam-locked,
+body.exam-locked {
+    overscroll-behavior-y: none;
+}
+
+.math-font {
+    font-family: 'Sarabun', sans-serif;
+}
+
+header {
+    background: linear-gradient(135deg, #450a0a 0%, #7f1d1d 50%, #9a3412 100%) !important;
+    box-shadow: 0 10px 25px rgba(69, 10, 10, 0.15);
+}
+
+button {
+    -webkit-tap-highlight-color: transparent;
+    transition: all 150ms ease;
+}
+
+button:active {
+    transform: translateY(2px);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #fff7ed;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #fdba74;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #f97316;
+}
+
+/* Piston Animation for Simulator */
+@keyframes heatPulse {
+
+    0%,
+    100% {
+        opacity: 0.6;
+        transform: scaleY(1);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scaleY(1.1);
+    }
+}
+
+/* Custom Font Awesome placeholder styling */
+.placeholder-fa::placeholder {
+    font-family: 'Font Awesome 6 Free', 'Prompt', sans-serif;
+    font-weight: 900;
+}
