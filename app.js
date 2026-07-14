@@ -32,6 +32,153 @@ function queueTypeset(element) {
     }
 }
 
+// ==========================================
+// RANDOM UTILITY FUNCTIONS (Testable) (ข้อ 10, 13)
+// ==========================================
+
+/**
+ * Seeded pseudo-random number generator (sfc32/mulberry32 hybrid style)
+ */
+class SeededRNG {
+    constructor(seedStr) {
+        let hash = 0;
+        for (let i = 0; i < seedStr.length; i++) hash = (hash * 31 + seedStr.charCodeAt(i)) | 0;
+        this.seed = hash || 1;
+    }
+    random() {
+        let t = this.seed += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+    shuffle(array) {
+        const arr = [...array];
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(this.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+}
+
+/**
+ * Generates a seeded random number in a given range [min, max] with a specific step.
+ */
+function getSeededRandomBase(questionId, seed, min, max, step = 1) {
+    const seedStr = `${questionId}_${seed}`;
+    const rng = new SeededRNG(seedStr);
+    const steps = Math.floor((max - min) / step);
+    return min + Math.floor(rng.random() * (steps + 1)) * step;
+}
+
+/**
+ * Parses the student number/random seed to extract the offset to be added to variables.
+ */
+function getOffsetFromR(r) {
+    if (!r) return 0;
+    if (typeof r === 'string') {
+        if (r.includes('_')) {
+            const studentNum = parseInt(r.split('_')[0], 10);
+            return Number.isFinite(studentNum) ? studentNum : 0;
+        }
+        const parsed = parseInt(r, 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+    if (typeof r === 'number') {
+        return (r % 9) + 1; // สุ่มได้เลข 1-9 เพื่อคงความง่ายของโจทย์
+    }
+    return 0;
+}
+
+/**
+ * Normalizes student number.
+ */
+function normalizeStudentNumber(n) {
+    const parsed = parseInt(n, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+// ==========================================
+// SYSTEM STATE & STORAGE UTILITIES (ข้อ 4, 5, 8, 9)
+// ==========================================
+
+const HISTORY_KEY = 'thermodynamics_question_history';
+
+/**
+ * Safely reads the history of generated question variable sets from localStorage.
+ * SSR-safe: returns empty array if window is undefined.
+ */
+function getHistory() {
+    if (typeof window === 'undefined') return [];
+    try {
+        const data = localStorage.getItem(HISTORY_KEY);
+        return data ? JSON.parse(data) : [];
+    } catch (e) {
+        console.error('Failed to read from localStorage', e);
+        return [];
+    }
+}
+
+/**
+ * Safely adds a unique key to the localStorage history, keeping at most 100 items.
+ * SSR-safe.
+ */
+function addToHistory(uniqueKey) {
+    if (typeof window === 'undefined') return;
+    try {
+        let history = getHistory();
+        history = history.filter(key => key !== uniqueKey);
+        history.push(uniqueKey);
+        if (history.length > 100) {
+            history = history.slice(history.length - 100);
+        }
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    } catch (e) {
+        console.error('Failed to write to localStorage', e);
+    }
+}
+
+/**
+ * Generates a list of values of active (displayed) variables from a params object.
+ */
+function getActiveParamValues(params) {
+    const values = [];
+    for (const key in params) {
+        if (key !== 'r' && key !== 'offset' && !key.endsWith('_base') && typeof params[key] === 'number') {
+            values.push(params[key]);
+        }
+    }
+    return values;
+}
+
+/**
+ * Checks if a params object contains duplicate values among active parameters.
+ * (ข้อ 2)
+ */
+function hasDuplicateVariables(params) {
+    const vals = getActiveParamValues(params);
+    const set = new Set(vals);
+    return set.size !== vals.length;
+}
+
+/**
+ * Generates a unique key string from templateId and active parameter values.
+ * (ข้อ 5)
+ */
+function generateUniqueKey(templateId, params) {
+    const vals = [];
+    const keys = Object.keys(params).filter(k => k !== 'r' && k !== 'offset' && !k.endsWith('_base'));
+    keys.sort();
+    keys.forEach(k => {
+        if (typeof params[k] === 'number') {
+            vals.push(`${k}:${Number(params[k].toFixed(4))}`);
+        } else {
+            vals.push(`${k}:${params[k]}`);
+        }
+    });
+    return `${templateId}[${vals.join(',')}]`;
+}
+
 // System State Variables
 let currentSection = 'home';
 let currentPracticeTopic = '16-4-1';
@@ -341,57 +488,6 @@ function clearFirstLawCalc() {
 
 
 // --- Dynamic Question Templates (16.4 Thermodynamics) ---
-class SeededRNG {
-    constructor(seedStr) {
-        let hash = 0;
-        for (let i = 0; i < seedStr.length; i++) hash = (hash * 31 + seedStr.charCodeAt(i)) | 0;
-        this.seed = hash || 1;
-    }
-    random() {
-        let t = this.seed += 0x6D2B79F5;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    }
-    shuffle(array) {
-        const arr = [...array];
-        for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(this.random() * (i + 1));
-            [arr[i], arr[j]] = [arr[j], arr[i]];
-        }
-        return arr;
-    }
-}
-
-// --- Non-Deterministic Random Helpers for Question Variables ---
-function normalizeStudentNumber(n) {
-    const parsed = parseInt(n, 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function getSeededRandomBase(questionId, studentNumber, min, max, step = 1) {
-    const seedStr = `${questionId}_${studentNumber}`;
-    const rng = new SeededRNG(seedStr);
-    const steps = Math.floor((max - min) / step);
-    return min + Math.floor(rng.random() * (steps + 1)) * step;
-}
-
-function getOffsetFromR(r) {
-    if (!r) return 0;
-    if (typeof r === 'string') {
-        if (r.includes('_')) {
-            const studentNum = parseInt(r.split('_')[0], 10);
-            return Number.isFinite(studentNum) ? studentNum : 0;
-        }
-        const parsed = parseInt(r, 10);
-        return Number.isFinite(parsed) ? parsed : 0;
-    }
-    if (typeof r === 'number') {
-        return (r % 9) + 1; // สุ่มได้เลข 1-9 เพื่อคงความง่ายของโจทย์
-    }
-    return 0;
-}
-
 const QUESTION_TEMPLATES = [
     // 16.4.1 พลังงานภายใน (Delta U)
     {
@@ -451,8 +547,8 @@ const QUESTION_TEMPLATES = [
     },
     {
         id: '16_4_2_work_compress', topic: '16.4.2', type: 'numeric_single',
-        title: 'หางานกรณีถูกบีบอัด \\( (\\text{ติดลบ}) \\)',
-        inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\) \\( (\\text{ระวังเครื่องหมายลบ}): \\)' }],
+        title: 'หางานกรณีถูกบีบอัด \\( (W) \\)',
+        inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `ออกแรงดันก้านกระบอกสูบให้แก๊สหดตัวจากปริมาตร \\(${p.v1}\\text{ ลิตร}\\) เหลือ \\(${p.v2}\\text{ ลิตร}\\) ภายใต้ความดันคงตัว \\(${p.r ? `(${p.p_base} + \\ ${p.r})` : p.p} \\times 10^3 \\text{ N/m}^2\\) งานที่แก๊สทำมีค่ากี่จูล \\( (\\text{กำหนด 1 ลิตร } = 10^{-3} \\text{ m}^3) \\)`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
@@ -753,7 +849,7 @@ const QUESTION_TEMPLATES = [
         id: '16_4_3_num5_isothermal', topic: '16.4.3-calc', type: 'numeric_single',
         title: 'ระบบอุณหภูมิคงที่',
         inputs: [{ label: 'ความร้อน \\( Q \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `แก๊สอุดมคติเกิดการขยายตัวโดยรักษาระดับให้ **อุณหภูมิคงที่** ตลอดกระบวนการ ถ้าแก๊สทำงานได้ \\(${p.r ? `(${p.W_base} + \\ ${p.r})` : p.W}\\text{ J}\\) ระบบนี้จะรับหรือคายความร้อนเท่าใด \\( (\\text{ตอบเป็นตัวเลข ถ้าคายให้ใส่เครื่องหมายลบ}) \)`,
+        text: (p) => `แก๊สอุดมคติเกิดการขยายตัวโดยรักษาระดับให้ **อุณหภูมิคงที่** ตลอดกระบวนการ ถ้าแก๊สทำงานได้ \\(${p.r ? `(${p.W_base} + \\ ${p.r})` : p.W}\\text{ J}\\) ระบบนี้จะรับหรือคายความร้อนเท่าใด`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
             const W_base = r ? getSeededRandomBase('16_4_3_num5_W', r, 300, 700, 100) : 500;
@@ -827,7 +923,7 @@ const QUESTION_TEMPLATES = [
         id: '16_4_3_num8_find_T', topic: '16.4.3-calc', type: 'numeric_single',
         title: 'หาอุณหภูมิที่เปลี่ยนไปจาก Q',
         inputs: [{ label: 'อุณหภูมิที่เพิ่มขึ้น \\( \\Delta T \\) \\( (\\text{K}) \\):' }],
-        text: (p) => `ให้ความร้อนระบบ \\(${p.Q}\\text{ J}\\) โดยล็อกลูกสูบไว้ไม่ให้ขยายตัว (ปริมาตรคงที่) แก๊สฮีเลียมจำนวน \\(${p.n}\\text{ โมล}\\) จะมีอุณหภูมิเพิ่มขึ้นกี่เคลวิน \\( (\\text{กำหนด } R = 8.3 \\text{ J/(mol K)} \\text{ เพื่อความง่ายในการคำนวณ}) \\)`,
+        text: (p) => `ให้ความร้อนระบบ \\(${p.Q}\\text{ J}\\) โดยล็อกลูกสูบไว้ไม่ให้ขยายตัว (ปริมาตรคงที่) แก๊สฮีเลียมจำนวน \\(${p.n}\\text{ โมล}\\) จะมีอุณหภูมิเพิ่มขึ้นกี่เคลวิน \\( (\\text{กำหนด } R = 8.3 \\text{ J/(mol K)}) \\)`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
             const n = r ? getSeededRandomBase('16_4_3_num8_n', r, 1, 3, 1) : 2;
@@ -836,7 +932,8 @@ const QUESTION_TEMPLATES = [
             const Q = Math.round(1.5 * n * 8.3 * exact_dT);
             const actual_dT = Q / (1.5 * n * 8.3);
             return {
-                params: { Q, n, dT_base, r: offset },
+                // เพิ่ม dT เพื่อความครบถ้วนของข้อมูลที่ใช้สุ่มตรวจค่าซ้ำ (ข้อ 2, 11)
+                params: { Q, n, dT: exact_dT, dT_base, r: offset },
                 answers: [actual_dT.toString(), actual_dT.toFixed(1), exact_dT.toString()],
                 answersRaw: [actual_dT, exact_dT],
                 explanation: () => `
@@ -854,7 +951,7 @@ const QUESTION_TEMPLATES = [
         id: '16_4_3_num9_heat_engine', topic: '16.4.3-calc', type: 'numeric_single',
         title: 'หลักการทำงานเครื่องยนต์ความร้อน',
         inputs: [{ label: 'คายความร้อนทิ้ง \\( (\\text{Joule}) \\):' }],
-        text: (p) => `ใน 1 วัฏจักร เครื่องยนต์ความร้อนรับความร้อนจากแหล่งอุณหภูมิสูงมา \\(${p.r ? `(${p.Qin_base} + \\ ${p.r})` : p.Qin}\\text{ J}\\) และสามารถทำงานได้ \\(${p.W}\\text{ J}\\) เครื่องยนต์นี้จะคายความร้อนทิ้งสู่แหล่งอุณหภูมิต่ำกี่จูล \\( (\\text{ตอบเป็นตัวเลขบวก}) \\)`,
+        text: (p) => `ใน 1 วัฏจักร เครื่องยนต์ความร้อนรับความร้อนจากแหล่งอุณหภูมิสูงมา \\(${p.r ? `(${p.Qin_base} + \\ ${p.r})` : p.Qin}\\text{ J}\\) และสามารถทำงานได้ \\(${p.W}\\text{ J}\\) เครื่องยนต์นี้จะคายความร้อนทิ้งสู่แหล่งอุณหภูมิต่ำกี่จูล`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
             const Qin_base = r ? getSeededRandomBase('16_4_3_num9_Qin', r, 800, 1500, 100) : 1200;
@@ -956,9 +1053,41 @@ function regeneratePractice() {
         practiceHistory[formattedTopic].shift();
     }
 
-    // ขยายขอบเขต Seed ในโหมดฝึกฝนเป็น 1 - 1,000,000 เพื่อความหลากหลายของตัวเลข
-    const R = isRandom ? Math.floor(Math.random() * 1000000) + 1 : null;
-    const instance = template.generate(R);
+    // ขยายขอบเขต Seed ในโหมดฝึกฝนเป็น 1 - 1,000,000 เพื่อความหลากหลายของตัวเลข (ข้อ 1, 3, 6, 7)
+    let instance = null;
+    let attempts = 0;
+    const history = getHistory();
+
+    while (attempts < 100) {
+        attempts++;
+        let R;
+        if (isRandom) {
+            // โหมดสุ่ม: สุ่มทั้งฐานตัวแปรและมีค่าบวกเพิ่ม (offset 1-9)
+            R = Math.floor(Math.random() * 1000000) + 1;
+        } else {
+            // โจทย์ปกติ: สุ่มเฉพาะฐานตัวแปรแต่ไม่มีค่าบวกเพิ่ม (offset เป็น 0)
+            R = "standard_" + Math.floor(Math.random() * 1000000);
+        }
+        
+        instance = template.generate(R);
+        
+        const vals = getActiveParamValues(instance.params);
+        if (vals.length > 0) {
+            // ตรวจสอบตัวแปรซ้ำภายในข้อเดียวกัน (ข้อ 2)
+            if (hasDuplicateVariables(instance.params)) {
+                continue;
+            }
+            
+            // ตรวจสอบประวัติการสุ่มไม่ให้ซ้ำกับรอบก่อนหน้า (ข้อ 3, 4, 5)
+            const key = generateUniqueKey(template.id, instance.params);
+            if (history.includes(key)) {
+                continue;
+            }
+            
+            addToHistory(key);
+        }
+        break; // สุ่มได้ผ่านเกณฑ์แล้ว
+    }
 
     currentPracticeQuestion = { template, instance };
     document.getElementById('prac-badge-mode').innerText = `หมวดหมู่โจทย์: ${template.topic.replace('-calc', '').replace('-concept', '')} • ${isRandom ? 'โหมดสุ่มตัวเลข' : 'โจทย์พื้นฐาน'}`;
@@ -1069,12 +1198,43 @@ function startExamProcess() {
     // สุ่มสลับลำดับข้อสอบทั้ง 5 ข้อ เพื่อให้ตำแหน่งของโจทย์เปลี่ยนไปในแต่ละรอบ
     selectedTemplates = pureShuffle(selectedTemplates);
 
-    currentExamQuestions = selectedTemplates.map(template => {
-        const instance = template.generate(examSeed);
+    currentExamQuestions = selectedTemplates.map((template, index) => {
+        let instance = null;
+        let attempts = 0;
+        const history = getHistory();
+        
+        while (attempts < 100) {
+            attempts++;
+            // สร้าง seed ที่มีเอกลักษณ์เฉพาะข้อและรัน เพื่อให้สุ่มได้จริงไม่ซ้ำ (ข้อ 1, 6, 7)
+            const seed = `${num}_${timestamp}_${template.id}_${attempts}`;
+            instance = template.generate(seed);
+            
+            const vals = getActiveParamValues(instance.params);
+            if (vals.length > 0) {
+                // ป้องกันตัวแปรซ้ำภายในข้อเดียวกัน (ข้อ 2)
+                if (hasDuplicateVariables(instance.params)) {
+                    continue;
+                }
+                
+                // ป้องกันการสุ่มชุดตัวเลขซ้ำกับรอบก่อนหน้า (ข้อ 3, 4, 5)
+                const key = generateUniqueKey(template.id, instance.params);
+                if (history.includes(key)) {
+                    continue;
+                }
+                
+                addToHistory(key);
+            }
+            break; // สุ่มได้ผ่านเกณฑ์
+        }
+
         const choices = template.type === 'choice' ? pureShuffle(template.choices) : [];
         return {
             id: template.id, topic: template.topic, type: template.type, title: template.title,
-            text: template.text(instance.params), inputs: template.inputs || [], choices: choices
+            text: template.text(instance.params), inputs: template.inputs || [], choices: choices,
+            // บันทึกคำตอบและคำอธิบายเฉลยที่สุ่มได้จริงในชุดเดียวกัน (ข้อ 11, 12)
+            answers: instance.answers,
+            answersRaw: instance.answersRaw,
+            explanationText: instance.explanation()
         };
     });
 
@@ -1223,26 +1383,25 @@ function submitExam(timeExpired = false) {
 
     currentExamQuestions.forEach((q, idx) => {
         const userAns = answers[idx];
-        const template = QUESTION_TEMPLATES.find(t => t.id === q.id);
-        const dynamicCalc = template.generate(R);
 
+        // ตรวจคำตอบเทียบกับเฉลยในโครงสร้างข้อสอบที่สุ่มและจัดเก็บไว้โดยตรง (ข้อ 11, 12)
         let isCorrect = false;
         if (q.type === 'choice') {
-            isCorrect = userAns === dynamicCalc.answers[0];
+            isCorrect = userAns === q.answers[0];
         } else if (q.type === 'numeric_single') {
-            isCorrect = userAns && isNumericAnswerCorrect(userAns[0], dynamicCalc.answersRaw[0]);
+            isCorrect = userAns && isNumericAnswerCorrect(userAns[0], q.answersRaw[0]);
         } else if (q.type === 'numeric_double') {
             isCorrect = userAns &&
-                isNumericAnswerCorrect(userAns[0], dynamicCalc.answersRaw[0]) &&
-                isNumericAnswerCorrect(userAns[1], dynamicCalc.answersRaw[1]);
+                isNumericAnswerCorrect(userAns[0], q.answersRaw[0]) &&
+                isNumericAnswerCorrect(userAns[1], q.answersRaw[1]);
         }
 
         const score = isCorrect ? 2.0 : 0.0;
         total_score += score;
         gradedResults.push({
             idx, isCorrect, score, userAns,
-            expectedAnswers: dynamicCalc.answers,
-            explanationText: dynamicCalc.explanation()
+            expectedAnswers: q.answers,
+            explanationText: q.explanationText
         });
     });
 
@@ -1318,21 +1477,36 @@ function toggleExamSolutionBox() {
 }
 
 function updateLatestScore() {
-    const saved = localStorage.getItem('last_exam_results_16_4');
-    const badge = document.getElementById('latest-score-badge');
-    if (saved) {
-        const data = JSON.parse(saved);
-        document.getElementById('lbl-last-score').innerHTML = `${data.score}/10 \\( (\\text{${data.studentInfo.name}}) \\)`;
-        badge.classList.remove('hidden');
-        queueTypeset(document.getElementById('lbl-last-score'));
+    // ป้องกันการเข้าถึง localStorage ระหว่าง SSR ใน Next.js (ข้อ 8, 9)
+    if (typeof window === 'undefined') return;
+    try {
+        const saved = localStorage.getItem('last_exam_results_16_4');
+        const badge = document.getElementById('latest-score-badge');
+        if (saved && badge) {
+            const data = JSON.parse(saved);
+            const scoreLbl = document.getElementById('lbl-last-score');
+            if (scoreLbl) {
+                scoreLbl.innerHTML = `${data.score}/10 \\( (\\text{${data.studentInfo.name}}) \\)`;
+                badge.classList.remove('hidden');
+                queueTypeset(scoreLbl);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to update latest score badge', e);
     }
 }
 
 function showLatestResultModal() {
-    const saved = localStorage.getItem('last_exam_results_16_4');
-    if (saved) {
-        showSection('exam-result');
-        renderExamResults(JSON.parse(saved));
+    // ป้องกันการเข้าถึง localStorage ระหว่าง SSR ใน Next.js (ข้อ 8, 9)
+    if (typeof window === 'undefined') return;
+    try {
+        const saved = localStorage.getItem('last_exam_results_16_4');
+        if (saved) {
+            showSection('exam-result');
+            renderExamResults(JSON.parse(saved));
+        }
+    } catch (e) {
+        console.error('Failed to show latest result modal', e);
     }
 }
 
