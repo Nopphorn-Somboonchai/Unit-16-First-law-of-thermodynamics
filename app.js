@@ -376,6 +376,22 @@ function getSeededRandomBase(questionId, studentNumber, min, max, step = 1) {
     return min + Math.floor(rng.random() * (steps + 1)) * step;
 }
 
+function getOffsetFromR(r) {
+    if (!r) return 0;
+    if (typeof r === 'string') {
+        if (r.includes('_')) {
+            const studentNum = parseInt(r.split('_')[0], 10);
+            return Number.isFinite(studentNum) ? studentNum : 0;
+        }
+        const parsed = parseInt(r, 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+    if (typeof r === 'number') {
+        return (r % 9) + 1; // สุ่มได้เลข 1-9 เพื่อคงความง่ายของโจทย์
+    }
+    return 0;
+}
+
 const QUESTION_TEMPLATES = [
     // 16.4.1 พลังงานภายใน (Delta U)
     {
@@ -384,19 +400,20 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `แก๊สอุดมคติอะตอมเดี่ยวจำนวน \\(${p.n}\\text{ โมล}\\) มีอุณหภูมิเพิ่มขึ้นจาก \\(${p.t1}^\\circ\\text{C}\\) เป็น \\(${p.r ? `(${p.t2_base} + \\ ${p.r})` : p.t2}^\\circ\\text{C}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล \\( (\\text{กำหนดให้ } R = 8.31 \\text{ J/mol K}) \\)`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const n = r ? getSeededRandomBase('16_4_1_dU_calc_n', r, 1, 3, 1) : 2; // 1, 2, 3 mol
             const t1 = 27;
             const t2_base = r ? getSeededRandomBase('16_4_1_dU_calc_t2', r, 37, 77, 10) : 47; // base = 37, 47, 57, 67, 77
-            const t2 = r ? t2_base + r : 47;
+            const t2 = r ? t2_base + offset : 47;
             const dT = t2 - t1;
             const dU = 1.5 * n * 8.31 * dT;
             return {
-                params: { n, t1, t2, t2_base, r },
+                params: { n, t1, t2, t2_base, r: offset },
                 answers: [Math.round(dU).toString(), dU.toFixed(1)],
                 answersRaw: [dU],
                 explanation: () => `
       จากสมการการเปลี่ยนพลังงานภายใน: \\( \\Delta U = \\frac{3}{2}nR\\Delta T \\)<br>
-      หาอุณหภูมิที่เปลี่ยนไป: \\( \\Delta T = ${r ? `(${t2_base} + \\ ${r})` : t2} - ${t1} = ${dT} \\text{ K} \\) \\( (\\text{ผลต่างอุณหภูมิ } ^\\circ\\text{C} \\text{ และ K มีค่าเท่ากัน}) \\)<br>
+      หาอุณหภูมิที่เปลี่ยนไป: \\( \\Delta T = ${r ? `(${t2_base} + \\ ${offset})` : t2} - ${t1} = ${dT} \\text{ K} \\) \\( (\\text{ผลต่างอุณหภูมิ } ^\\circ\\text{C} \\text{ และ K มีค่าเท่ากัน}) \\)<br>
       แทนค่า: \\( \\Delta U = \\frac{3}{2}(${n})(8.31)(${dT}) \\)<br>
       \\( \\Delta U = ${dU.toFixed(1)} \\text{ J} \\) \\( (\\text{มีค่าเป็นบวก เพราะอุณหภูมิเพิ่มขึ้น}) \\)
     `
@@ -411,21 +428,22 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `แก๊สในกระบอกสูบขยายตัวจากปริมาตร \\(${p.v1} \\times 10^{-3} \\text{ m}^3\\) เป็น \\(${p.v2} \\times 10^{-3} \\text{ m}^3\\) ภายใต้ความดันคงตัว \\(${p.r ? `(${p.p_base} + \\ ${p.r})` : p.p} \\times 10^3 \\text{ Pa}\\) แก๊สทำงานกี่จูล`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const v1 = r ? getSeededRandomBase('16_4_2_work_calc_v1', r, 2, 4, 1) : 2;
             const v2 = r ? getSeededRandomBase('16_4_2_work_calc_v2', r, 5, 8, 1) : 5; // expansion
             const p_base = r ? getSeededRandomBase('16_4_2_work_calc_p', r, 100, 200, 10) : 150;
-            const p = r ? p_base + r : 150; // in kPa, i.e. 10^3 Pa
+            const p = r ? p_base + offset : 150; // in kPa, i.e. 10^3 Pa
             const dV = (v2 - v1) * 1e-3;
             const P_val = p * 1e3;
             const W = P_val * dV;
             return {
-                params: { v1, v2, p, p_base, r },
+                params: { v1, v2, p, p_base, r: offset },
                 answers: [Math.round(W).toString(), W.toFixed(1)],
                 answersRaw: [W],
                 explanation: () => `
       จากสมการงานของแก๊สที่ความดันคงตัว: \\( W = P\\Delta V = P(V_2 - V_1) \\)<br>
       \\( \\Delta V = (${v2} \\times 10^{-3}) - (${v1} \\times 10^{-3}) = ${v2 - v1} \\times 10^{-3} \\text{ m}^3 \\)<br>
-      แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${r})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
+      แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${offset})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
       \\( W = ${W.toFixed(1)} \\text{ J} \\) \\( (\\text{เครื่องหมายเป็นบวก เพราะแก๊สขยายตัวปริมาตรเพิ่มขึ้น}) \\)
     `
             };
@@ -437,20 +455,21 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\) \\( (\\text{ระวังเครื่องหมายลบ}): \\)' }],
         text: (p) => `ออกแรงดันก้านกระบอกสูบให้แก๊สหดตัวจากปริมาตร \\(${p.v1}\\text{ ลิตร}\\) เหลือ \\(${p.v2}\\text{ ลิตร}\\) ภายใต้ความดันคงตัว \\(${p.r ? `(${p.p_base} + \\ ${p.r})` : p.p} \\times 10^3 \\text{ N/m}^2\\) งานที่แก๊สทำมีค่ากี่จูล \\( (\\text{กำหนด 1 ลิตร } = 10^{-3} \\text{ m}^3) \\)`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const v1 = r ? getSeededRandomBase('16_4_2_work_compress_v1', r, 7, 9, 1) : 8;
             const v2 = r ? getSeededRandomBase('16_4_2_work_compress_v2', r, 2, 4, 1) : 3; // compression
             const p_base = r ? getSeededRandomBase('16_4_2_work_compress_p', r, 80, 150, 10) : 100;
-            const p = r ? p_base + r : 100;
+            const p = r ? p_base + offset : 100;
             const dV = (v2 - v1) * 1e-3;
             const W = p * 1e3 * dV; // will be negative
             return {
-                params: { v1, v2, p, p_base, r },
+                params: { v1, v2, p, p_base, r: offset },
                 answers: [Math.round(W).toString(), W.toFixed(1)],
                 answersRaw: [W],
                 explanation: () => `
       จากสมการ: \\( W = P(V_2 - V_1) \\)<br>
       \\( V_2 - V_1 = (${v2} - ${v1}) \\times 10^{-3} = ${v2 - v1} \\times 10^{-3} \\text{ m}^3 \\) \\( (\\text{ปริมาตรลดลง ติดลบ}) \\)<br>
-      แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${r})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
+      แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${offset})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
       \\( W = ${W.toFixed(1)} \\text{ J} \\) <br>
       **\\( (\\text{ต้องตอบติดลบ เพราะเป็นการทำงาน "ให้กับแก๊ส" ไม่ใช่แก๊สเป็นผู้ทำ}) \\)**
     `
@@ -465,17 +484,18 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'ความร้อน \\( Q \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `เมื่อให้ความร้อนแก่แก๊สในกระบอกสูบ ปรากฏว่าพลังงานภายในของแก๊สเพิ่มขึ้น \\(${p.r ? `(${p.dU_base} + \\ ${p.r})` : p.dU}\\text{ J}\\) และแก๊สขยายตัวดันลูกสูบทำงานได้ \\(${p.w}\\text{ J}\\) ความร้อนที่ระบบได้รับมีค่ากี่จูล`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const dU_base = r ? getSeededRandomBase('16_4_3_law1_calc_Q_dU', r, 100, 200, 10) : 150;
-            const dU = r ? dU_base + r : 150;
+            const dU = r ? dU_base + offset : 150;
             const w = r ? getSeededRandomBase('16_4_3_law1_calc_Q_w', r, 50, 100, 10) : 80;
             const Q = dU + w;
             return {
-                params: { dU, w, dU_base, r },
+                params: { dU, w, dU_base, r: offset },
                 answers: [Q.toString()],
                 answersRaw: [Q],
                 explanation: () => `
       จากกฎข้อที่หนึ่งของอุณหพลศาสตร์: \\( Q = \\Delta U + W \\)<br>
-      - พลังงานภายในเพิ่มขึ้น \\( \\Rightarrow \\Delta U = +${r ? `(${dU_base} + \\ ${r})` : dU} = +${dU} \\)<br>
+      - พลังงานภายในเพิ่มขึ้น \\( \\Rightarrow \\Delta U = +${r ? `(${dU_base} + \\ ${offset})` : dU} = +${dU} \\)<br>
       - แก๊สทำงานขยายตัว \\( \\Rightarrow W = +${w} \\)<br>
       แทนค่า: \\( Q = (+${dU}) + (+${w}) = ${Q} \\text{ J} \\)
     `
@@ -488,21 +508,22 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `ระบบแก๊สหนึ่งคายความร้อนออกสู่สิ่งแวดล้อม \\(${p.r ? `(${p.q_base} + \\ ${p.r})` : p.q_mag}\\text{ J}\\) ในขณะเดียวกันพบว่าพลังงานภายในระบบลดลง \\(${p.dU_mag}\\text{ J}\\) งานที่เกี่ยวข้องมีค่ากี่จูล`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const q_base = r ? getSeededRandomBase('16_4_3_law1_calc_W_q', r, 200, 400, 50) : 300;
-            const q_mag = r ? q_base + r : 300;
+            const q_mag = r ? q_base + offset : 300;
             const dU_mag = r ? getSeededRandomBase('16_4_3_law1_calc_W_dU', r, 100, 200, 25) : 150;
             // Q = dU + W => W = Q - dU
             const Q = -q_mag; // คาย
             const dU = -dU_mag; // ลดลง
             const W = Q - dU;
             return {
-                params: { q_mag, dU_mag, q_base, r },
+                params: { q_mag, dU_mag, q_base, r: offset },
                 answers: [W.toString()],
                 answersRaw: [W],
                 explanation: () => `
       ตั้งสมการกฎข้อ 1: \\( Q = \\Delta U + W \\) หรือ \\( W = Q - \\Delta U \\)<br>
       **พิจารณาเครื่องหมายให้รอบคอบ:**<br>
-      - คายความร้อน \\( \\Rightarrow Q = -${r ? `(${q_base} + \\ ${r})` : q_mag} = -${q_mag} \\text{ J} \\)<br>
+      - คายความร้อน \\( \\Rightarrow Q = -${r ? `(${q_base} + \\ ${offset})` : q_mag} = -${q_mag} \\text{ J} \\)<br>
       - พลังงานภายในลดลง \\( \\Rightarrow \\Delta U = -${dU_mag} \\text{ J} \\)<br>
       แทนค่า: \\( W = (-${q_mag}) - (-${dU_mag}) = ${W} \\text{ J} \\)
     `
@@ -630,19 +651,20 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `แก๊สอาร์กอน \\( (\\text{Ar}) \\) มวล \\(${p.m}\\text{ กรัม}\\) บรรจุในกระบอกสูบ มีอุณหภูมิเพิ่มขึ้น \\(${p.r ? `(${p.dT_base} + \\ ${p.r})` : p.dT}\\text{ K}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล \\( (\\text{กำหนดมวลโมลาร์ Ar } = 40 \\text{ g/mol}, R = 8.31 \\text{ J/(mol K)}) \\)`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const m = r ? getSeededRandomBase('16_4_1_num1_argon_m', r, 40, 120, 20) : 80; // 40, 60, 80, 100, 120 g
             const dT_base = r ? getSeededRandomBase('16_4_1_num1_argon_dT', r, 10, 30, 5) : 20;
-            const dT = r ? dT_base + r : 20; // 10, 15, 20, 25 K
+            const dT = r ? dT_base + offset : 20; // 10, 15, 20, 25 K
             const n = m / 40;
             const dU = 1.5 * n * 8.31 * dT;
             return {
-                params: { m, dT, dT_base, r },
+                params: { m, dT, dT_base, r: offset },
                 answers: [Math.round(dU).toString(), dU.toFixed(1), dU.toFixed(2)],
                 answersRaw: [dU],
                 explanation: () => `
       หาจำนวนโมล: \\( n = \\frac{m}{M} = \\frac{${m}}{40} = ${n} \\text{ mol} \\)<br>
       จากสมการ: \\( \\Delta U = \\frac{3}{2}nR\\Delta T \\)<br>
-      แทนค่า: \\( \\Delta U = \\frac{3}{2}(${n})(8.31)(${r ? `(${dT_base} + \\ ${r})` : dT}) \\)<br>
+      แทนค่า: \\( \\Delta U = \\frac{3}{2}(${n})(8.31)(${r ? `(${dT_base} + \\ ${offset})` : dT}) \\)<br>
       \\( \\Delta U = ${dU.toFixed(1)} \\text{ J} \\)
     `
             };
@@ -655,19 +677,20 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `แก๊สขยายตัวดันลูกสูบจากปริมาตร \\(${p.v1}\\text{ ลิตร}\\) เป็น \\(${p.r ? `(${p.v2_base} + \\ ${p.r})` : p.v2}\\text{ ลิตร}\\) ภายใต้ความดันคงตัว \\(${p.P_atm}\\text{ บรรยากาศ (atm)}\\) งานที่ทำโดยแก๊สมีค่ากี่จูล \\( (\\text{กำหนด 1 atm } = 10^5 \\text{ Pa}, \\text{ 1 ลิตร } = 10^{-3} \\text{ m}^3) \\)`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const v1 = r ? getSeededRandomBase('16_4_2_num2_v1', r, 2, 4, 1) : 2;
             const v2_base = r ? getSeededRandomBase('16_4_2_num2_v2', r, 5, 8, 1) : 5; // expansion
-            const v2 = r ? v2_base + r : 5;
+            const v2 = r ? v2_base + offset : 5;
             const P_atm = r ? getSeededRandomBase('16_4_2_num2_p', r, 1, 3, 0.5) : 1.5;
             const dV_L = v2 - v1;
             const W = P_atm * 1e5 * (dV_L * 1e-3); // essentially dV_L * P_atm * 100
             return {
-                params: { v1, v2, v2_base, P_atm, r },
+                params: { v1, v2, v2_base, P_atm, r: offset },
                 answers: [Math.round(W).toString(), W.toFixed(1)],
                 answersRaw: [W],
                 explanation: () => `
       ความดัน: \\( P = ${P_atm} \\times 10^5 \\text{ Pa} \\)<br>
-      ปริมาตรเปลี่ยน: \\( \\Delta V = (${r ? `(${v2_base} + \\ ${r})` : v2} - ${v1}) \\times 10^{-3} = ${dV_L} \\times 10^{-3} \\text{ m}^3 \\)<br>
+      ปริมาตรเปลี่ยน: \\( \\Delta V = (${r ? `(${v2_base} + \\ ${offset})` : v2} - ${v1}) \\times 10^{-3} = ${dV_L} \\times 10^{-3} \\text{ m}^3 \\)<br>
       งานที่ทำ: \\( W = P\\Delta V = (${P_atm} \\times 10^5) \\times (${dV_L} \\times 10^{-3}) \\)<br>
       \\( W = ${W.toFixed(1)} \\text{ J} \\)
     `
@@ -681,18 +704,19 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `ระบบให้ความร้อนแก่แก๊ส \\(${p.r ? `(${p.Q_base} + \\ ${p.r})` : p.Q}\\text{ J}\\) ส่งผลให้แก๊สขยายตัวและทำงานผลักลูกสูบได้ \\(${p.W}\\text{ J}\\) พลังงานภายในระบบเปลี่ยนแปลงไปเท่าใด`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const Q_base = r ? getSeededRandomBase('16_4_3_num3_Q', r, 400, 800, 50) : 600;
-            const Q = r ? Q_base + r : 600;
+            const Q = r ? Q_base + offset : 600;
             const W = r ? getSeededRandomBase('16_4_3_num3_W', r, 100, 200, 20) : 150;
             const dU = Q - W;
             return {
-                params: { Q, W, Q_base, r },
+                params: { Q, W, Q_base, r: offset },
                 answers: [dU.toString()],
                 answersRaw: [dU],
                 explanation: () => `
       จากกฎข้อที่หนึ่ง: \\( Q = \\Delta U + W \\) <br>
       จัดรูปหา \\( \\Delta U \\) จะได้: \\( \\Delta U = Q - W \\)<br>
-      แทนค่า (รับความร้อนเป็นบวก, แก๊สทำงานเป็นบวก): \\( \\Delta U = ${r ? `(${Q_base} + \\ ${r})` : Q} - ${W} = ${dU} \\text{ J} \\)
+      แทนค่า (รับความร้อนเป็นบวก, แก๊สทำงานเป็นบวก): \\( \\Delta U = ${r ? `(${Q_base} + \\ ${offset})` : Q} - ${W} = ${dU} \\text{ J} \\)
     `
             };
         }
@@ -707,18 +731,19 @@ const QUESTION_TEMPLATES = [
         ],
         text: (p) => `กระบอกสูบถูกยึดให้ **ปริมาตรคงที่** จากนั้นให้ความร้อนแก่ระบบแก๊สภายในจำนวน \\(${p.r ? `(${p.Q_base} + \\ ${p.r})` : p.Q}\\text{ J}\\) จงหางานที่แก๊สทำได้ \\( (W) \) และพลังงานภายในที่เปลี่ยนไป `,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const Q_base = r ? getSeededRandomBase('16_4_3_num4_Q', r, 200, 500, 50) : 350;
-            const Q = r ? Q_base + r : 350;
+            const Q = r ? Q_base + offset : 350;
             const W = 0;
             const dU = Q;
             return {
-                params: { Q, Q_base, r },
+                params: { Q, Q_base, r: offset },
                 answers: [W.toString(), dU.toString()],
                 answersRaw: [W, dU],
                 explanation: () => `
       1. **หางาน (W):** เมื่อปริมาตรคงที่ แก๊สไม่มีการขยายตัวหรือหดตัว ดังนั้น \\( W = 0 \\text{ J} \\)<br>
       2. **หา \\( \\Delta U \\):** จากกฎข้อที่ 1 \\( Q = \\Delta U + W \\) เมื่อ \\( W = 0 \\) จะได้ \\( \\Delta U = Q \\)<br>
-      ดังนั้น \\( \\Delta U = +${r ? `(${Q_base} + \\ ${r})` : Q} = +${dU} \\text{ J} \\)
+      ดังนั้น \\( \\Delta U = +${r ? `(${Q_base} + \\ ${offset})` : Q} = +${dU} \\text{ J} \\)
     `
             };
         }
@@ -730,17 +755,18 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'ความร้อน \\( Q \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `แก๊สอุดมคติเกิดการขยายตัวโดยรักษาระดับให้ **อุณหภูมิคงที่** ตลอดกระบวนการ ถ้าแก๊สทำงานได้ \\(${p.r ? `(${p.W_base} + \\ ${p.r})` : p.W}\\text{ J}\\) ระบบนี้จะรับหรือคายความร้อนเท่าใด \\( (\\text{ตอบเป็นตัวเลข ถ้าคายให้ใส่เครื่องหมายลบ}) \)`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const W_base = r ? getSeededRandomBase('16_4_3_num5_W', r, 300, 700, 100) : 500;
-            const W = r ? W_base + r : 500;
+            const W = r ? W_base + offset : 500;
             const Q = W;
             return {
-                params: { W, W_base, r },
+                params: { W, W_base, r: offset },
                 answers: [Q.toString()],
                 answersRaw: [Q],
                 explanation: () => `
       เมื่ออุณหภูมิคงที่ จะไม่มีการเปลี่ยนแปลงพลังงานภายในระบบ นั่นคือ **\\( \\Delta U = 0 \\)**<br>
       จากกฎข้อที่ 1: \\( Q = \\Delta U + W \\) จะกลายเป็น \\( Q = 0 + W = W \\)<br>
-      ดังนั้น ความร้อน \\( Q = +${r ? `(${W_base} + \\ ${r})` : W} = +${Q} \\text{ J} \\) (ระบบต้องรับความร้อนเข้ามาเพื่อใช้ในการทำงานทั้งหมดโดยอุณหภูมิไม่ตก)
+      ดังนั้น ความร้อน \\( Q = +${r ? `(${W_base} + \\ ${offset})` : W} = +${Q} \\text{ J} \\) (ระบบต้องรับความร้อนเข้ามาเพื่อใช้ในการทำงานทั้งหมดโดยอุณหภูมิไม่ตก)
     `
             };
         }
@@ -752,17 +778,18 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `กระบอกสูบหุ้มฉนวนความร้อนอย่างดี ถูกออกแรงบีบอัดอย่างรวดเร็วทำให้สิ่งแวดล้อมทำงานให้แก๊ส \\(${p.r ? `(${p.W_base} + \\ ${p.r})` : p.W}\\text{ J}\\) พลังงานภายในระบบแก๊สเปลี่ยนไปเท่าใด `,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const W_base = r ? getSeededRandomBase('16_4_3_num6_W', r, 150, 400, 50) : 250;
-            const W_mag = r ? W_base + r : 250;
+            const W_mag = r ? W_base + offset : 250;
             // Q = 0, W = -W_mag (compressed)
             const dU = W_mag; // 0 = dU + (-W_mag) => dU = W_mag
             return {
-                params: { W: W_mag, W_base, r },
+                params: { W: W_mag, W_base, r: offset },
                 answers: [dU.toString(), "+" + dU.toString()],
                 answersRaw: [dU],
                 explanation: () => `
       หุ้มฉนวนและบีบอย่างรวดเร็ว หมายถึงไม่มีความร้อนเข้าหรือออก **\\( (Q = 0) \\)**<br>
-      ถูกบีบอัด หมายถึงสิ่งแวดล้อมทำงานให้ งานติดลบ **\\( W = -${r ? `(${W_base} + \\ ${r})` : W_mag} = -${W_mag} \\text{ J} \\)**<br>
+      ถูกบีบอัด หมายถึงสิ่งแวดล้อมทำงานให้ งานติดลบ **\\( W = -${r ? `(${W_base} + \\ ${offset})` : W_mag} = -${W_mag} \\text{ J} \\)**<br>
       จาก \\( Q = \\Delta U + W \\Rightarrow 0 = \\Delta U - ${W_mag} \\)<br>
       ดังนั้น \\( \\Delta U = +${dU} \\text{ J} \\) (อุณหภูมิของแก๊สจะสูงขึ้น)
     `
@@ -776,17 +803,18 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `แก๊สในกระบอกสูบคายความร้อนออกสู่สิ่งแวดล้อม \\(${p.r ? `(${p.Q_base} + \\ ${p.r})` : p.Q}\\text{ J}\\) และในขณะเดียวกันปริมาตรของแก๊สหดตัวลงโดยมีสิ่งแวดล้อมทำงานให้ \\(${p.W}\\text{ J}\\) พลังงานภายในระบบมีการเปลี่ยนแปลงเท่าใด `,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const Q_base = r ? getSeededRandomBase('16_4_3_num7_Q', r, 250, 450, 50) : 400;
-            const Q_mag = r ? Q_base + r : 400;
+            const Q_mag = r ? Q_base + offset : 400;
             const W_mag = r ? getSeededRandomBase('16_4_3_num7_W', r, 100, 200, 50) : 150;
             // Q is negative, W is negative
             const dU = -Q_mag - (-W_mag);
             return {
-                params: { Q: Q_mag, W: W_mag, Q_base, r },
+                params: { Q: Q_mag, W: W_mag, Q_base, r: offset },
                 answers: [dU.toString()],
                 answersRaw: [dU],
                 explanation: () => `
-      - คายความร้อน: \\( Q = -${r ? `(${Q_base} + \\ ${r})` : Q_mag} = -${Q_mag} \\text{ J} \\)<br>
+      - คายความร้อน: \\( Q = -${r ? `(${Q_base} + \\ ${offset})` : Q_mag} = -${Q_mag} \\text{ J} \\)<br>
       - หดตัว (สิ่งแวดล้อมทำงานให้): \\( W = -${W_mag} \\text{ J} \\)<br>
       จาก \\( Q = \\Delta U + W \\Rightarrow -${Q_mag} = \\Delta U + (-${W_mag}) \\)<br>
       \\( \\Delta U = -${Q_mag} + ${W_mag} = ${dU} \\text{ J} \\)
@@ -801,13 +829,14 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'อุณหภูมิที่เพิ่มขึ้น \\( \\Delta T \\) \\( (\\text{K}) \\):' }],
         text: (p) => `ให้ความร้อนระบบ \\(${p.Q}\\text{ J}\\) โดยล็อกลูกสูบไว้ไม่ให้ขยายตัว (ปริมาตรคงที่) แก๊สฮีเลียมจำนวน \\(${p.n}\\text{ โมล}\\) จะมีอุณหภูมิเพิ่มขึ้นกี่เคลวิน \\( (\\text{กำหนด } R = 8.3 \\text{ J/(mol K)} \\text{ เพื่อความง่ายในการคำนวณ}) \\)`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const n = r ? getSeededRandomBase('16_4_3_num8_n', r, 1, 3, 1) : 2;
             const dT_base = r ? getSeededRandomBase('16_4_3_num8_dT', r, 10, 30, 10) : 20;
-            const exact_dT = r ? dT_base + r : 20;
+            const exact_dT = r ? dT_base + offset : 20;
             const Q = Math.round(1.5 * n * 8.3 * exact_dT);
             const actual_dT = Q / (1.5 * n * 8.3);
             return {
-                params: { Q, n, dT_base, r },
+                params: { Q, n, dT_base, r: offset },
                 answers: [actual_dT.toString(), actual_dT.toFixed(1), exact_dT.toString()],
                 answersRaw: [actual_dT, exact_dT],
                 explanation: () => `
@@ -827,19 +856,20 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'คายความร้อนทิ้ง \\( (\\text{Joule}) \\):' }],
         text: (p) => `ใน 1 วัฏจักร เครื่องยนต์ความร้อนรับความร้อนจากแหล่งอุณหภูมิสูงมา \\(${p.r ? `(${p.Qin_base} + \\ ${p.r})` : p.Qin}\\text{ J}\\) และสามารถทำงานได้ \\(${p.W}\\text{ J}\\) เครื่องยนต์นี้จะคายความร้อนทิ้งสู่แหล่งอุณหภูมิต่ำกี่จูล \\( (\\text{ตอบเป็นตัวเลขบวก}) \\)`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const Qin_base = r ? getSeededRandomBase('16_4_3_num9_Qin', r, 800, 1500, 100) : 1200;
-            const Qin = r ? Qin_base + r : 1200;
+            const Qin = r ? Qin_base + offset : 1200;
             const eff = r ? getSeededRandomBase('16_4_3_num9_eff', r, 3, 5, 1) / 10 : 0.4;
             const W = Qin * eff;
             const Qout = Qin - W;
             return {
-                params: { Qin, W, Qin_base, r },
+                params: { Qin, W, Qin_base, r: offset },
                 answers: [Qout.toString(), Qout.toFixed(1)],
                 answersRaw: [Qout],
                 explanation: () => `
       ในกระบวนการ 1 วัฏจักร (Cyclic) พลังงานภายในระบบเริ่มต้นและสิ้นสุดเท่าเดิม (\\( \\Delta U = 0 \\))<br>
       พลังงานความร้อนสุทธิในระบบ \\( Q_{net} = W \\)<br>
-      \\( Q_{in} - Q_{out} = W \\Rightarrow ${r ? `(${Qin_base} + \\ ${r})` : Qin} - Q_{out} = ${W} \\)<br>
+      \\( Q_{in} - Q_{out} = W \\Rightarrow ${r ? `(${Qin_base} + \\ ${offset})` : Qin} - Q_{out} = ${W} \\)<br>
       ดังนั้น คายความร้อนทิ้ง \\( Q_{out} = ${Qin} - ${W} = ${Qout} \\text{ J} \\)
     `
             };
@@ -852,17 +882,18 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
         text: (p) => `ระบบได้รับความร้อน \\(${p.r ? `(${p.Q_base} + \\ ${p.r})` : p.Q}\\text{ J}\\) แต่ในขณะเดียวกันปริมาตรของแก๊สหดตัวลงโดยมีสิ่งแวดล้อมทำงานให้ \\(${p.W}\\text{ J}\\) พลังงานภายในระบบเปลี่ยนไปเท่าใด`,
         generate: (r) => {
+            const offset = getOffsetFromR(r);
             const Q_base = r ? getSeededRandomBase('16_4_3_num10_Q', r, 300, 600, 50) : 500;
-            const Q = r ? Q_base + r : 500;
+            const Q = r ? Q_base + offset : 500;
             const W_mag = r ? getSeededRandomBase('16_4_3_num10_W', r, 100, 200, 25) : 150;
             // Q = +, W = -
             const dU = Q - (-W_mag);
             return {
-                params: { Q, W: W_mag, Q_base, r },
+                params: { Q, W: W_mag, Q_base, r: offset },
                 answers: [dU.toString(), "+" + dU.toString()],
                 answersRaw: [dU],
                 explanation: () => `
-      - ระบบรับความร้อน \\( Q = +${r ? `(${Q_base} + \\ ${r})` : Q} \\text{ J} \\)<br>
+      - ระบบรับความร้อน \\( Q = +${r ? `(${Q_base} + \\ ${offset})` : Q} \\text{ J} \\)<br>
       - สิ่งแวดล้อมทำงานให้ (ปริมาตรหด) \\( W = -${W_mag} \\text{ J} \\)<br>
       จากกฎข้อ 1: \\( Q = \\Delta U + W \\Rightarrow ${Q} = \\Delta U + (-${W_mag}) \\)<br>
       \\( \\Delta U = ${Q} + ${W_mag} = ${dU} \\text{ J} \\)
@@ -1006,7 +1037,15 @@ function startExamProcess() {
     examDurationSeconds = 15 * 60;
     examStudentInfo = { name, class: cls, number: num, seed: examSeed };
 
-    const examRNG = new SeededRNG(Math.random().toString());
+    // ฟังก์ชันสับการ์ดแบบสุ่มแท้ (Non-deterministic Shuffle)
+    const pureShuffle = (array) => {
+        const arr = [...array];
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    };
 
     // Select 5 questions mixing topics for Thermodynamics
     const q_dU = QUESTION_TEMPLATES.filter(q => q.topic === '16.4.1');
@@ -1014,12 +1053,12 @@ function startExamProcess() {
     const q_LawCalc = QUESTION_TEMPLATES.filter(q => q.topic === '16.4.3-calc');
     const q_LawCon = QUESTION_TEMPLATES.filter(q => q.topic === '16.4.3-concept');
 
-    const shuffled_dU = examRNG.shuffle(q_dU);
-    const shuffled_W = examRNG.shuffle(q_W);
-    const shuffled_LawCalc = examRNG.shuffle(q_LawCalc);
-    const shuffled_LawCon = examRNG.shuffle(q_LawCon);
+    const shuffled_dU = pureShuffle(q_dU);
+    const shuffled_W = pureShuffle(q_W);
+    const shuffled_LawCalc = pureShuffle(q_LawCalc);
+    const shuffled_LawCon = pureShuffle(q_LawCon);
 
-    const selectedTemplates = [
+    let selectedTemplates = [
         shuffled_dU[0],
         shuffled_W[0],
         shuffled_W[1], // Have a high chance of testing both expansion and compression
@@ -1027,9 +1066,12 @@ function startExamProcess() {
         shuffled_LawCon[0]
     ];
 
+    // สุ่มสลับลำดับข้อสอบทั้ง 5 ข้อ เพื่อให้ตำแหน่งของโจทย์เปลี่ยนไปในแต่ละรอบ
+    selectedTemplates = pureShuffle(selectedTemplates);
+
     currentExamQuestions = selectedTemplates.map(template => {
         const instance = template.generate(examSeed);
-        const choices = template.type === 'choice' ? examRNG.shuffle(template.choices) : [];
+        const choices = template.type === 'choice' ? pureShuffle(template.choices) : [];
         return {
             id: template.id, topic: template.topic, type: template.type, title: template.title,
             text: template.text(instance.params), inputs: template.inputs || [], choices: choices
