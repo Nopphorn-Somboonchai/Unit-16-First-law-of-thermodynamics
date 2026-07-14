@@ -36,6 +36,7 @@ function queueTypeset(element) {
 let currentSection = 'home';
 let currentPracticeTopic = '16-4-1';
 let currentPracticeQuestion = null;
+let practiceHistory = {}; // เก็บประวัติ { 'topic_name': [template_id_1, template_id_2] }
 
 // Exam State
 let currentExamQuestions = [];
@@ -48,6 +49,7 @@ let examDeadlineTimestamp = null;
 let examIsActive = false;
 let examSubmissionInProgress = false;
 let examStudentInfo = {};
+let examSeed = null;
 let examExitGuardEnabled = false;
 
 // --- Helper Math / Format Functions ---
@@ -368,8 +370,10 @@ function normalizeStudentNumber(n) {
 }
 
 function getSeededRandomBase(questionId, studentNumber, min, max, step = 1) {
+    const seedStr = `${questionId}_${studentNumber}`;
+    const rng = new SeededRNG(seedStr);
     const steps = Math.floor((max - min) / step);
-    return min + Math.floor(Math.random() * (steps + 1)) * step;
+    return min + Math.floor(rng.random() * (steps + 1)) * step;
 }
 
 const QUESTION_TEMPLATES = [
@@ -891,9 +895,38 @@ function regeneratePractice() {
     const filtered = QUESTION_TEMPLATES.filter(q => q.topic === formattedTopic);
 
     if (!filtered.length) return;
-    const template = filtered[Math.floor(Math.random() * filtered.length)];
 
-    const R = isRandom ? Math.floor(Math.random() * 50) + 1 : null;
+    if (!practiceHistory[formattedTopic]) {
+        practiceHistory[formattedTopic] = [];
+    }
+
+    // กรองเอาโจทย์ที่ยังไม่เคยแสดงในรอบนี้
+    let available = filtered.filter(q => !practiceHistory[formattedTopic].includes(q.id));
+
+    // ถ้าแสดงครบทุกตัวเลือกแล้ว ให้ล้างประวัติโดยเก็บข้อล่าสุดไว้เพื่อไม่ให้ซ้ำกันทันที
+    if (available.length === 0) {
+        const lastShown = practiceHistory[formattedTopic][practiceHistory[formattedTopic].length - 1];
+        practiceHistory[formattedTopic] = lastShown ? [lastShown] : [];
+        available = filtered.filter(q => !practiceHistory[formattedTopic].includes(q.id));
+    }
+
+    // กรณีความปลอดภัย หากยังไม่มีค่า ให้ใช้ข้อทั้งหมด
+    if (available.length === 0) {
+        available = filtered;
+    }
+
+    const template = available[Math.floor(Math.random() * available.length)];
+
+    // เพิ่มโจทย์ปัจจุบันลงในประวัติ
+    practiceHistory[formattedTopic].push(template.id);
+
+    // จำกัดขนาดประวัติเพื่อไม่ให้ยาวเกินไป
+    if (practiceHistory[formattedTopic].length > Math.max(1, filtered.length - 1)) {
+        practiceHistory[formattedTopic].shift();
+    }
+
+    // ขยายขอบเขต Seed ในโหมดฝึกฝนเป็น 1 - 1,000,000 เพื่อความหลากหลายของตัวเลข
+    const R = isRandom ? Math.floor(Math.random() * 1000000) + 1 : null;
     const instance = template.generate(R);
 
     currentPracticeQuestion = { template, instance };
@@ -962,14 +995,16 @@ function startExamProcess() {
     const name = document.getElementById('exam-student-name').value.trim();
     const cls = document.getElementById('exam-student-class').value;
     const num = document.getElementById('exam-student-no').value.trim();
-    const R = parseInt(num);
-    if (!name || !cls || isNaN(R) || R < 1 || R > 40) {
+    const R_parsed = parseInt(num);
+    if (!name || !cls || isNaN(R_parsed) || R_parsed < 1 || R_parsed > 40) {
         triggerAlert("ข้อมูลไม่ครบถ้วน", "กรุณาระบุ ชื่อ ชั้นเรียน และเลขที่ \\( (1-40) \\) ให้ถูกต้องก่อนเริ่มสอบครับ", "fa-user", "bg-orange-100 text-orange-600");
         return;
     }
 
+    const timestamp = Date.now();
+    examSeed = `${num}_${timestamp}`; // ใช้ เลขที่ + เวลาปัจจุบัน เป็นเมล็ดสุ่มตัวเลขในการสอบรอบนี้
     examDurationSeconds = 15 * 60;
-    examStudentInfo = { name, class: cls, number: num };
+    examStudentInfo = { name, class: cls, number: num, seed: examSeed };
 
     const examRNG = new SeededRNG(Math.random().toString());
 
@@ -993,7 +1028,7 @@ function startExamProcess() {
     ];
 
     currentExamQuestions = selectedTemplates.map(template => {
-        const instance = template.generate(R);
+        const instance = template.generate(examSeed);
         const choices = template.type === 'choice' ? examRNG.shuffle(template.choices) : [];
         return {
             id: template.id, topic: template.topic, type: template.type, title: template.title,
@@ -1142,7 +1177,7 @@ function submitExam(timeExpired = false) {
     const answers = getExamAnswers();
     let total_score = 0;
     const gradedResults = [];
-    const R = parseInt(examStudentInfo.number) || 1;
+    const R = examStudentInfo.seed || parseInt(examStudentInfo.number) || 1;
 
     currentExamQuestions.forEach((q, idx) => {
         const userAns = answers[idx];
@@ -1272,6 +1307,7 @@ window.onload = () => {
             if (s.examDeadlineTimestamp > Date.now()) {
                 currentExamQuestions = s.examQuestions;
                 examStudentInfo = s.studentInfo;
+                examSeed = s.studentInfo.seed || null;
                 examDeadlineTimestamp = s.examDeadlineTimestamp;
                 examDurationSeconds = s.examDurationSeconds;
                 examIsActive = true;
