@@ -560,14 +560,14 @@ const QUESTION_TEMPLATES = [
             const W = p * 1e3 * dV; // will be negative
             return {
                 params: { v1, v2, p, p_base, r: offset },
-                answers: [Math.round(W).toString(), W.toFixed(1)],
-                answersRaw: [W],
+                answers: [Math.round(W).toString(), W.toFixed(1), Math.round(-W).toString(), (-W).toFixed(1)],
+                answersRaw: [[W, -W]],
                 explanation: () => `
       จากสมการ: \\( W = P(V_2 - V_1) \\)<br>
       \\( V_2 - V_1 = (${v2} - ${v1}) \\times 10^{-3} = ${v2 - v1} \\times 10^{-3} \\text{ m}^3 \\) \\( (\\text{ปริมาตรลดลง ติดลบ}) \\)<br>
       แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${offset})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
       \\( W = ${W.toFixed(1)} \\text{ J} \\) <br>
-      **\\( (\\text{ต้องตอบติดลบ เพราะเป็นการทำงาน "ให้กับแก๊ส" ไม่ใช่แก๊สเป็นผู้ทำ}) \\)**
+      **\\( (\\text{สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของงาน}) \\)**
     `
             };
         }
@@ -614,14 +614,15 @@ const QUESTION_TEMPLATES = [
             const W = Q - dU;
             return {
                 params: { q_mag, dU_mag, q_base, r: offset },
-                answers: [W.toString()],
-                answersRaw: [W],
+                answers: [W.toString(), (-W).toString()],
+                answersRaw: [[W, -W]],
                 explanation: () => `
       ตั้งสมการกฎข้อ 1: \\( Q = \\Delta U + W \\) หรือ \\( W = Q - \\Delta U \\)<br>
       **พิจารณาเครื่องหมายให้รอบคอบ:**<br>
       - คายความร้อน \\( \\Rightarrow Q = -${r ? `(${q_base} + \\ ${offset})` : q_mag} = -${q_mag} \\text{ J} \\)<br>
       - พลังงานภายในลดลง \\( \\Rightarrow \\Delta U = -${dU_mag} \\text{ J} \\)<br>
-      แทนค่า: \\( W = (-${q_mag}) - (-${dU_mag}) = ${W} \\text{ J} \\)
+      แทนค่า: \\( W = (-${q_mag}) - (-${dU_mag}) = ${W} \\text{ J} \\) <br>
+      **\\( (\\text{สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของงาน}) \\)**
     `
             };
         }
@@ -907,13 +908,14 @@ const QUESTION_TEMPLATES = [
             const dU = -Q_mag - (-W_mag);
             return {
                 params: { Q: Q_mag, W: W_mag, Q_base, r: offset },
-                answers: [dU.toString()],
-                answersRaw: [dU],
+                answers: [dU.toString(), (-dU).toString()],
+                answersRaw: [[dU, -dU]],
                 explanation: () => `
       - คายความร้อน: \\( Q = -${r ? `(${Q_base} + \\ ${offset})` : Q_mag} = -${Q_mag} \\text{ J} \\)<br>
       - หดตัว (สิ่งแวดล้อมทำงานให้): \\( W = -${W_mag} \\text{ J} \\)<br>
       จาก \\( Q = \\Delta U + W \\Rightarrow -${Q_mag} = \\Delta U + (-${W_mag}) \\)<br>
-      \\( \\Delta U = -${Q_mag} + ${W_mag} = ${dU} \\text{ J} \\)
+      \\( \\Delta U = -${Q_mag} + ${W_mag} = ${dU} \\text{ J} \\) <br>
+      **\\( (\\text{สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของการเปลี่ยนแปลง}) \\)**
     `
             };
         }
@@ -935,7 +937,7 @@ const QUESTION_TEMPLATES = [
                 // เพิ่ม dT เพื่อความครบถ้วนของข้อมูลที่ใช้สุ่มตรวจค่าซ้ำ (ข้อ 2, 11)
                 params: { Q, n, dT: exact_dT, dT_base, r: offset },
                 answers: [actual_dT.toString(), actual_dT.toFixed(1), exact_dT.toString()],
-                answersRaw: [actual_dT, exact_dT],
+                answersRaw: [[actual_dT, exact_dT]],
                 explanation: () => `
       ปริมาตรคงที่ แปลว่า งาน \\( W = 0 \\) และ \\( Q = \\Delta U \\)<br>
       จากสมการ \\( \\Delta U = \\frac{3}{2}nR\\Delta T \\)<br>
