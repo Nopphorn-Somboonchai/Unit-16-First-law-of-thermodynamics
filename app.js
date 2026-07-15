@@ -331,10 +331,10 @@ function initInternalEnergySim() {
         lblResult.innerText = (deltaU > 0 ? '+' : '') + deltaU + ' J';
         if (deltaU > 0) {
             lblResult.className = "text-xl font-mono font-bold text-red-400";
-            lblSign.innerHTML = "อุณหภูมิเพิ่ม \\( (\\Delta U \\text{ เป็น บวก}) \\)";
+            lblSign.innerHTML = "อุณหภูมิเพิ่ม \\( (\\Delta U \\) เป็นบวก\\( ) \\)";
         } else if (deltaU < 0) {
             lblResult.className = "text-xl font-mono font-bold text-blue-400";
-            lblSign.innerHTML = "อุณหภูมิลด \\( (\\Delta U \\text{ เป็น ลบ}) \\)";
+            lblSign.innerHTML = "อุณหภูมิลด \\( (\\Delta U \\) เป็นลบ\\( ) \\)";
         } else {
             lblResult.className = "text-xl font-mono font-bold text-slate-400";
             lblSign.innerHTML = "อุณหภูมิคงที่ \\( (\\Delta U = 0) \\)";
@@ -413,10 +413,10 @@ function initWorkSim() {
         lblResult.innerText = (W > 0 ? '+' : '') + W + ' J';
         if (W > 0) {
             lblResult.className = "text-xl font-mono font-bold text-emerald-500";
-            lblSign.innerHTML = "ปริมาตรขยายตัว แก๊สทำงาน \\( (W \\text{ เป็น บวก}) \\)";
+            lblSign.innerHTML = "ปริมาตรขยายตัว แก๊สทำงาน \\( (W \\) เป็นบวก\\( ) \\)";
         } else if (W < 0) {
             lblResult.className = "text-xl font-mono font-bold text-red-500";
-            lblSign.innerHTML = "ปริมาตรลดลง สิ่งแวดล้อมทำ \\( (W \\text{ เป็น ลบ}) \\)";
+            lblSign.innerHTML = "ปริมาตรลดลง สิ่งแวดล้อมทำ \\( (W \\) เป็นลบ\\( ) \\)";
         } else {
             lblResult.className = "text-xl font-mono font-bold text-slate-400";
             lblSign.innerHTML = "ปริมาตรคงที่ \\( (W = 0) \\)";
@@ -493,8 +493,8 @@ const QUESTION_TEMPLATES = [
     {
         id: '16_4_1_dU_calc', topic: '16.4.1', type: 'numeric_single',
         title: 'หาการเปลี่ยนแปลงพลังงานภายใน \\( (\\Delta U) \\)',
-        inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `แก๊สอุดมคติอะตอมเดี่ยวจำนวน \\(${p.n}\\text{ โมล}\\) มีอุณหภูมิเพิ่มขึ้นจาก \\(${p.t1}^\\circ\\text{C}\\) เป็น \\(${p.r ? `(${p.t2_base} + \\ ${p.r})` : p.t2}^\\circ\\text{C}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล \\( (\\text{กำหนดให้ } R = 8.31 \\text{ J/mol K}) \\)`,
+        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
+        text: (p) => `แก๊สอุดมคติอะตอมเดี่ยวจำนวน \\(${p.n}\\) โมล มีอุณหภูมิเพิ่มขึ้นจาก \\(${p.t1}^\\circ\\text{C}\\) เป็น \\(${p.r ? `(${p.t2_base} + \\ ${p.r})` : p.t2}^\\circ\\text{C}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล (กำหนดให้ \\( R = 8.31 \\text{ J/mol K}\\))`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
             const n = r ? getSeededRandomBase('16_4_1_dU_calc_n', r, 1, 3, 1) : 2; // 1, 2, 3 mol
@@ -509,9 +509,9 @@ const QUESTION_TEMPLATES = [
                 answersRaw: [dU],
                 explanation: () => `
       จากสมการการเปลี่ยนพลังงานภายใน: \\( \\Delta U = \\frac{3}{2}nR\\Delta T \\)<br>
-      หาอุณหภูมิที่เปลี่ยนไป: \\( \\Delta T = ${r ? `(${t2_base} + \\ ${offset})` : t2} - ${t1} = ${dT} \\text{ K} \\) \\( (\\text{ผลต่างอุณหภูมิ } ^\\circ\\text{C} \\text{ และ K มีค่าเท่ากัน}) \\)<br>
+      หาอุณหภูมิที่เปลี่ยนไป: \\( \\Delta T = ${r ? `(${t2_base} + \\ ${offset})` : t2} - ${t1} = ${dT} \\text{ K} \\) (ผลต่างอุณหภูมิ \\( ^\\circ\\text{C} \\) และ K มีค่าเท่ากัน)<br>
       แทนค่า: \\( \\Delta U = \\frac{3}{2}(${n})(8.31)(${dT}) \\)<br>
-      \\( \\Delta U = ${dU.toFixed(1)} \\text{ J} \\) \\( (\\text{มีค่าเป็นบวก เพราะอุณหภูมิเพิ่มขึ้น}) \\)
+      \\( \\Delta U = ${dU.toFixed(1)} \\text{ J} \\) (มีค่าเป็นบวก เพราะอุณหภูมิเพิ่มขึ้น)
     `
             };
         }
@@ -540,7 +540,7 @@ const QUESTION_TEMPLATES = [
       จากสมการงานของแก๊สที่ความดันคงตัว: \\( W = P\\Delta V = P(V_2 - V_1) \\)<br>
       \\( \\Delta V = (${v2} \\times 10^{-3}) - (${v1} \\times 10^{-3}) = ${v2 - v1} \\times 10^{-3} \\text{ m}^3 \\)<br>
       แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${offset})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
-      \\( W = ${W.toFixed(1)} \\text{ J} \\) \\( (\\text{เครื่องหมายเป็นบวก เพราะแก๊สขยายตัวปริมาตรเพิ่มขึ้น}) \\)
+      \\( W = ${W.toFixed(1)} \\text{ J} \\) (เครื่องหมายเป็นบวก เพราะแก๊สขยายตัวปริมาตรเพิ่มขึ้น)
     `
             };
         }
@@ -549,7 +549,7 @@ const QUESTION_TEMPLATES = [
         id: '16_4_2_work_compress', topic: '16.4.2', type: 'numeric_single',
         title: 'หางานกรณีถูกบีบอัด \\( (W) \\)',
         inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `ออกแรงดันก้านกระบอกสูบให้แก๊สหดตัวจากปริมาตร \\(${p.v1}\\text{ ลิตร}\\) เหลือ \\(${p.v2}\\text{ ลิตร}\\) ภายใต้ความดันคงตัว \\(${p.r ? `(${p.p_base} + \\ ${p.r})` : p.p} \\times 10^3 \\text{ N/m}^2\\) งานที่แก๊สทำมีค่ากี่จูล \\( (\\text{กำหนด 1 ลิตร } = 10^{-3} \\text{ m}^3) \\)`,
+        text: (p) => `ออกแรงดันก้านกระบอกสูบให้แก๊สหดตัวจากปริมาตร \\(${p.v1}\\) ลิตร เหลือ \\(${p.v2}\\) ลิตร ภายใต้ความดันคงตัว \\(${p.r ? `(${p.p_base} + \\ ${p.r})` : p.p} \\times 10^3 \\text{ N/m}^2\\) งานที่แก๊สทำมีค่ากี่จูล (กำหนด 1 ลิตร = \\(10^{-3} \\text{ m}^3\\))`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
             const v1 = r ? getSeededRandomBase('16_4_2_work_compress_v1', r, 7, 9, 1) : 8;
@@ -564,10 +564,10 @@ const QUESTION_TEMPLATES = [
                 answersRaw: [[W, -W]],
                 explanation: () => `
       จากสมการ: \\( W = P(V_2 - V_1) \\)<br>
-      \\( V_2 - V_1 = (${v2} - ${v1}) \\times 10^{-3} = ${v2 - v1} \\times 10^{-3} \\text{ m}^3 \\) \\( (\\text{ปริมาตรลดลง ติดลบ}) \\)<br>
+      \\( V_2 - V_1 = (${v2} - ${v1}) \\times 10^{-3} = ${v2 - v1} \\times 10^{-3} \\text{ m}^3 \\) (ปริมาตรลดลง ติดลบ)<br>
       แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${offset})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
       \\( W = ${W.toFixed(1)} \\text{ J} \\) <br>
-      **\\( (\\text{สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของงาน}) \\)**
+      **(สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของงาน)**
     `
             };
         }
@@ -622,7 +622,7 @@ const QUESTION_TEMPLATES = [
       - คายความร้อน \\( \\Rightarrow Q = -${r ? `(${q_base} + \\ ${offset})` : q_mag} = -${q_mag} \\text{ J} \\)<br>
       - พลังงานภายในลดลง \\( \\Rightarrow \\Delta U = -${dU_mag} \\text{ J} \\)<br>
       แทนค่า: \\( W = (-${q_mag}) - (-${dU_mag}) = ${W} \\text{ J} \\) <br>
-      **\\( (\\text{สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของงาน}) \\)**
+      **(สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของงาน)**
     `
             };
         }
@@ -643,7 +643,7 @@ const QUESTION_TEMPLATES = [
             answersRaw: [0],
             explanation: () => `
       - **ระบบรับความร้อน:** ระบบได้พลังงานเข้ามา ดังนั้น \\( Q \\) จึงมีเครื่องหมายเป็น **บวก \\( (+) \\)**<br>
-      - **ถูกบีบอัดปริมาตรเล็กลง:** สิ่งแวดล้อมเป็นฝ่ายทำงานให้ระบบ \\( (\\text{ไม่ใช่แก๊สทำงานเอง}) \\) ดังนั้นงาน \\( W \\) จึงมีเครื่องหมายเป็น **ลบ \\( (-) \\)**
+      - **ถูกบีบอัดปริมาตรเล็กลง:** สิ่งแวดล้อมเป็นฝ่ายทำงานให้ระบบ (ไม่ใช่แก๊สทำงานเอง) ดังนั้นงาน \\( W \\) จึงมีเครื่องหมายเป็น **ลบ \\( (-) \\)**
     `
         })
     },
@@ -701,7 +701,7 @@ const QUESTION_TEMPLATES = [
             params: {},
             answers: ['พลังงานภายในลดลง และ อุณหภูมิลดลง'],
             answersRaw: [0],
-            explanation: () => `ไม่มีการถ่ายโอนความร้อน \\( (Q = 0) \\) และแก๊สขยายตัว \\( (W \\text{ เป็นบวก}) \\)<br>จาก \\( Q = \\Delta U + W \\Rightarrow 0 = \\Delta U + W \\Rightarrow \\Delta U = -W \\)<br>จะได้ \\( \\Delta U \\) มีค่าติดลบ (พลังงานภายในลดลง) ซึ่งหมายความว่า **อุณหภูมิต้องลดลง** ด้วย`
+        explanation: () => `ไม่มีการถ่ายโอนความร้อน \\( (Q = 0) \\) และแก๊สขยายตัว (W เป็นบวก)<br>จาก \\( Q = \\Delta U + W \\Rightarrow 0 = \\Delta U + W \\Rightarrow \\Delta U = -W \\)<br>จะได้ \\( \\Delta U \\) มีค่าติดลบ (พลังงานภายในลดลง) ซึ่งหมายความว่า **อุณหภูมิต้องลดลง** ด้วย`
         })
     },
     // ปรนัย 4: วัฏจักร (Cyclic Process)
@@ -745,8 +745,8 @@ const QUESTION_TEMPLATES = [
     {
         id: '16_4_1_num1_argon', topic: '16.4.1', type: 'numeric_single',
         title: 'หา \\( \\Delta U \\) ของแก๊สอาร์กอน',
-        inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `แก๊สอาร์กอน \\( (\\text{Ar}) \\) มวล \\(${p.m}\\text{ กรัม}\\) บรรจุในกระบอกสูบ มีอุณหภูมิเพิ่มขึ้น \\(${p.r ? `(${p.dT_base} + \\ ${p.r})` : p.dT}\\text{ K}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล \\( (\\text{กำหนดมวลโมลาร์ Ar } = 40 \\text{ g/mol}, R = 8.31 \\text{ J/(mol K)}) \\)`,
+        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
+        text: (p) => `แก๊สอาร์กอน (Ar) มวล \\(${p.m}\\) กรัม บรรจุในกระบอกสูบ มีอุณหภูมิเพิ่มขึ้น \\(${p.r ? `(${p.dT_base} + \\ ${p.r})` : p.dT}\\text{ K}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล (กำหนดมวลโมลาร์ Ar = 40 g/mol, \\( R = 8.31 \\text{ J/(mol K)}\\))`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
             const m = r ? getSeededRandomBase('16_4_1_num1_argon_m', r, 40, 120, 20) : 80; // 40, 60, 80, 100, 120 g
@@ -771,8 +771,8 @@ const QUESTION_TEMPLATES = [
     {
         id: '16_4_2_num2_atm_L', topic: '16.4.2', type: 'numeric_single',
         title: 'หางานจากการขยายตัว (atm, L)',
-        inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `แก๊สขยายตัวดันลูกสูบจากปริมาตร \\(${p.v1}\\text{ ลิตร}\\) เป็น \\(${p.r ? `(${p.v2_base} + \\ ${p.r})` : p.v2}\\text{ ลิตร}\\) ภายใต้ความดันคงตัว \\(${p.P_atm}\\text{ บรรยากาศ (atm)}\\) งานที่ทำโดยแก๊สมีค่ากี่จูล \\( (\\text{กำหนด 1 atm } = 10^5 \\text{ Pa}, \\text{ 1 ลิตร } = 10^{-3} \\text{ m}^3) \\)`,
+        inputs: [{ label: 'งาน \\( W \\) (Joule):' }],
+        text: (p) => `แก๊สขยายตัวดันลูกสูบจากปริมาตร \\(${p.v1}\\) ลิตร เป็น \\(${p.r ? `(${p.v2_base} + \\ ${p.r})` : p.v2}\\) ลิตร ภายใต้ความดันคงตัว \\(${p.P_atm}\\) บรรยากาศ (atm) งานที่ทำโดยแก๊สมีค่ากี่จูล (กำหนด 1 atm = \\(10^5 \\text{ Pa}\\), 1 ลิตร = \\(10^{-3} \\text{ m}^3\\))`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
             const v1 = r ? getSeededRandomBase('16_4_2_num2_v1', r, 2, 4, 1) : 2;
@@ -915,7 +915,7 @@ const QUESTION_TEMPLATES = [
       - หดตัว (สิ่งแวดล้อมทำงานให้): \\( W = -${W_mag} \\text{ J} \\)<br>
       จาก \\( Q = \\Delta U + W \\Rightarrow -${Q_mag} = \\Delta U + (-${W_mag}) \\)<br>
       \\( \\Delta U = -${Q_mag} + ${W_mag} = ${dU} \\text{ J} \\) <br>
-      **\\( (\\text{สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของการเปลี่ยนแปลง}) \\)**
+      **(สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของการเปลี่ยนแปลง)**
     `
             };
         }
@@ -924,8 +924,8 @@ const QUESTION_TEMPLATES = [
     {
         id: '16_4_3_num8_find_T', topic: '16.4.3-calc', type: 'numeric_single',
         title: 'หาอุณหภูมิที่เปลี่ยนไปจาก Q',
-        inputs: [{ label: 'อุณหภูมิที่เพิ่มขึ้น \\( \\Delta T \\) \\( (\\text{K}) \\):' }],
-        text: (p) => `ให้ความร้อนระบบ \\(${p.Q}\\text{ J}\\) โดยล็อกลูกสูบไว้ไม่ให้ขยายตัว (ปริมาตรคงที่) แก๊สฮีเลียมจำนวน \\(${p.n}\\text{ โมล}\\) จะมีอุณหภูมิเพิ่มขึ้นกี่เคลวิน \\( (\\text{กำหนด } R = 8.3 \\text{ J/(mol K)}) \\)`,
+        inputs: [{ label: 'อุณหภูมิที่เพิ่มขึ้น \\( \\Delta T \\) (K):' }],
+        text: (p) => `ให้ความร้อนระบบ \\(${p.Q}\\text{ J}\\) โดยล็อกลูกสูบไว้ไม่ให้ขยายตัว (ปริมาตรคงที่) แก๊สฮีเลียมจำนวน \\(${p.n}\\) โมล จะมีอุณหภูมิเพิ่มขึ้นกี่เคลวิน (กำหนด \\( R = 8.3 \\text{ J/(mol K)}\\))`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
             const n = r ? getSeededRandomBase('16_4_3_num8_n', r, 1, 3, 1) : 2;
@@ -1240,8 +1240,7 @@ function startExamProcess() {
         };
     });
 
-    document.getElementById('lbl-exam-user-info').innerHTML = `${name} \\( (\\text{ม.6/}${cls} \\text{ เลขที่ } ${num}) \\)`;
-    queueTypeset(document.getElementById('lbl-exam-user-info'));
+    document.getElementById('lbl-exam-user-info').innerHTML = `${name} (ม.6/${cls} เลขที่ ${num})`;
 
     renderExamLiveDOM();
 
@@ -1424,7 +1423,7 @@ function submitExam(timeExpired = false) {
 
 function renderExamResults(data) {
     document.getElementById('lbl-res-student-name').innerText = data.studentInfo.name;
-    document.getElementById('lbl-res-student-meta').innerHTML = `\\( (\\text{ม.6/}${data.studentInfo.class} \\text{ เลขที่ } ${data.studentInfo.number}) \\)`;
+    document.getElementById('lbl-res-student-meta').innerHTML = `(ม.6/${data.studentInfo.class} เลขที่ ${data.studentInfo.number})`;
     document.getElementById('lbl-res-time-elapsed').innerText = data.timeTaken;
     document.getElementById('lbl-res-finished-at').innerText = data.date;
 
@@ -1529,8 +1528,7 @@ window.onload = () => {
                 examDeadlineTimestamp = s.examDeadlineTimestamp;
                 examDurationSeconds = s.examDurationSeconds;
                 examIsActive = true;
-                document.getElementById('lbl-exam-user-info').innerHTML = `${s.studentInfo.name} \\( (\\text{ม.6/}${s.studentInfo.class} \\text{ เลขที่ } ${s.studentInfo.number}) \\)`;
-                queueTypeset(document.getElementById('lbl-exam-user-info'));
+                document.getElementById('lbl-exam-user-info').innerHTML = `${s.studentInfo.name} (ม.6/${s.studentInfo.class} เลขที่ ${s.studentInfo.number})`;
                 renderExamLiveDOM();
                 setupExamLocks();
                 showSection('exam-live');
