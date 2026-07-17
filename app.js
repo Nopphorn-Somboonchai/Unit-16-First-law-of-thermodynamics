@@ -1105,7 +1105,7 @@ function regeneratePractice() {
 
     if (template.type === 'choice') {
         cz.classList.remove('hidden'); nz.classList.add('hidden');
-        cz.innerHTML = template.choices.map(c => `<button onclick="checkPracticeChoice('${c}')" class="w-full text-left px-5 py-3 bg-white hover:bg-orange-50 text-slate-800 font-medium rounded-xl border border-slate-200 hover:border-orange-300 transition">${c}</button>`).join('');
+        cz.innerHTML = template.choices.map((c, cIdx) => `<button onclick="checkPracticeChoice(${cIdx})" class="w-full text-left px-5 py-3 bg-white hover:bg-orange-50 text-slate-800 font-medium rounded-xl border border-slate-200 hover:border-orange-300 transition">${c}</button>`).join('');
     } else {
         cz.classList.add('hidden'); nz.classList.remove('hidden');
         document.getElementById('lbl-prac-input-1').innerHTML = template.inputs[0].label;
@@ -1135,9 +1135,10 @@ function checkPracticeAnswer() {
     showPracticeFeedback(c1 && c2, instance.explanation());
 }
 
-function checkPracticeChoice(choice) {
+function checkPracticeChoice(choiceIndex) {
     if (!currentPracticeQuestion) return;
-    const { instance } = currentPracticeQuestion;
+    const { template, instance } = currentPracticeQuestion;
+    const choice = template.choices[choiceIndex];
     showPracticeFeedback(choice === instance.answers[0], instance.explanation());
 }
 
