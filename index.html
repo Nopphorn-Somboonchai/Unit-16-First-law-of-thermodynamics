@@ -44,7 +44,18 @@
     <link rel="stylesheet" href="style.css">
 </head>
 
-<body class="text-slate-800 min-h-screen flex flex-col">
+<body class="text-slate-800 min-h-screen flex flex-col relative">
+
+    <!-- Floating Anti-Cheat Warning Banner -->
+    <div id="floating-cheat-banner"
+        class="hidden fixed top-5 right-5 z-[999] max-w-sm bg-red-600/95 backdrop-blur-md text-white border border-red-400/60 shadow-2xl rounded-2xl p-4 flex items-center gap-3 transition-all duration-300 transform -translate-y-2 opacity-0">
+        <div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl shrink-0">
+            <i class="fa-solid fa-triangle-exclamation animate-bounce"></i>
+        </div>
+        <div class="text-xs md:text-sm font-medium leading-snug" id="floating-cheat-msg">
+            ⚠️ ตรวจพบการสลับหน้าจอ/เปิดแท็บอื่น (ครั้งที่ 1) ระบบได้บันทึกไว้แล้ว
+        </div>
+    </div>
 
     <!-- Header Banner -->
     <header class="text-white sticky top-0 z-40">
@@ -132,11 +143,12 @@
                     </p>
 
                     <div id="latest-score-badge"
-                        class="hidden bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
+                        class="hidden bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2 shadow-sm">
                         <div class="flex items-center gap-2 text-xs md:text-sm text-slate-600">
                             <i class="fa-solid fa-clipboard-check text-orange-500 text-lg"></i>
                             <span>ผลสอบล่าสุดของคุณ: <strong id="lbl-last-score"
                                     class="text-slate-800">-</strong></span>
+                            <span id="lbl-last-status-badge" class="px-2.5 py-0.5 rounded-full text-xs font-bold"></span>
                         </div>
                         <button onclick="showLatestResultModal()"
                             class="text-orange-600 hover:text-orange-800 font-semibold text-xs flex items-center gap-1 transition">
@@ -696,10 +708,10 @@
                         <i class="fa-solid fa-triangle-exclamation"></i> กติกาการสอบ (อ่านก่อนเริ่ม):
                     </h4>
                     <ul class="list-disc pl-5 space-y-1.5 text-xs md:text-sm font-medium">
-                        <li>มีทั้งหมด <strong>5 ข้อ</strong> ข้อละ 2 คะแนน (รวม 10 คะแนน)</li>
-                        <li>ครอบคลุมเนื้อหา: \(\Delta U\), \(W\), กฎข้อที่ 1 และเครื่องหมาย</li>
-                        <li>มีตัวจับเวลาถอยหลัง 15 นาที</li>
-                        <li><strong>ห้ามรีเฟรชหน้าจอ</strong> มิฉะนั้นอาจถูกปรับฟาวล์และส่งข้อสอบอัตโนมัติ</li>
+                        <li>มีทั้งหมด <strong>5 ข้อ</strong> ข้อละ 2 คะแนน (รวม 10 คะแนนเต็ม)</li>
+                        <li>ครอบคลุมเนื้อหา: \(\Delta U\), งาน \(W\), พื้นที่ใต้กราฟ \(P-V\), กฎข้อที่ 1, กระบวนการทั้ง 4 แบบ และเครื่องยนต์ความร้อน</li>
+                        <li>ล็อกเวลาทำข้อสอบตายตัว <strong>15 นาที</strong> (900 วินาที) เกณฑ์ผ่านคือ \(\ge 5\) คะแนน (\(\ge 50\%\))</li>
+                        <li><strong>ระบบตรวจจับการทุจริต (Anti-Cheat):</strong> ห้ามสลับแท็บ ยุบหน้าจอ หรือรีเฟรช หากตรวจพบจะบันทึกสถิติและแจ้งเตือนทันที</li>
                     </ul>
                 </div>
 
@@ -725,8 +737,8 @@
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-xs font-bold text-slate-600 mb-1.5">เลขที่:</label>
-                                <input type="number" id="exam-student-no" placeholder="เช่น 5"
+                                <label class="block text-xs font-bold text-slate-600 mb-1.5">เลขที่ (1-40):</label>
+                                <input type="number" id="exam-student-no" min="1" max="40" step="1" placeholder="เช่น 5 (1-40)"
                                     class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none transition bg-slate-50 focus:bg-white text-sm">
                             </div>
                         </div>
@@ -761,6 +773,10 @@
                     </div>
                     <span class="text-sm text-slate-300 truncate font-medium">
                         <strong class="text-white" id="lbl-exam-user-info">-</strong>
+                    </span>
+                    <span id="badge-exam-attempt"
+                        class="bg-orange-500/20 text-orange-300 border border-orange-500/40 px-2.5 py-0.5 rounded-full text-xs font-semibold shrink-0">
+                        สอบครั้งที่ 1
                     </span>
                 </div>
                 <div class="flex items-center gap-2 bg-slate-800/80 px-4 py-1.5 rounded-full border border-slate-700">
@@ -818,9 +834,12 @@
                             class="bg-slate-50 p-4 rounded-xl border border-slate-200 flex justify-between items-center">
                             <span class="text-xs text-slate-500 font-bold uppercase"><i
                                     class="fa-solid fa-user text-slate-400 mr-2"></i>ผู้สอบ</span>
-                            <div class="text-right">
+                            <div class="text-right flex flex-col items-end gap-1">
                                 <p id="lbl-res-student-name" class="font-bold text-slate-800">-</p>
-                                <p id="lbl-res-student-meta" class="text-xs text-slate-500">-</p>
+                                <div class="flex items-center gap-2">
+                                    <p id="lbl-res-student-meta" class="text-xs text-slate-500">-</p>
+                                    <span id="lbl-res-attempt-badge" class="bg-orange-100 text-orange-700 border border-orange-200 px-2 py-0.5 rounded-full text-[10px] font-bold">สอบครั้งที่ 1</span>
+                                </div>
                             </div>
                         </div>
                         <div class="grid grid-cols-2 gap-4">
@@ -839,8 +858,13 @@
                 </div>
 
                 <div id="lbl-res-badge-feedback"
-                    class="text-center p-4 rounded-xl mb-8 border border-slate-200 bg-slate-50 text-sm">
+                    class="text-center p-4 rounded-xl mb-6 border border-slate-200 bg-slate-50 text-sm">
                     <!-- Feedback message injected by JS -->
+                </div>
+
+                <!-- Cheat / Integrity Summary Card -->
+                <div id="exam-cheat-summary-card" class="mb-8">
+                    <!-- Injected by JS -->
                 </div>
 
                 <!-- Detailed Table -->

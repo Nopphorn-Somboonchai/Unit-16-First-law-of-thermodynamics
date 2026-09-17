@@ -190,7 +190,8 @@ let currentExamQuestions = [];
 let examTimerInterval = null;
 let examTimeRemaining = 900;
 let examDurationSeconds = 900;
-const EXAM_STATE_KEY = 'exam_session_thermodynamics';
+const EXAM_STATE_KEY = 'heat_16_4_exam_state';
+const EXAM_STATE_FALLBACK_KEY = 'thermo_16_4_exam_state';
 let examStartTimestamp = null;
 let examDeadlineTimestamp = null;
 let examIsActive = false;
@@ -198,6 +199,182 @@ let examSubmissionInProgress = false;
 let examStudentInfo = {};
 let examSeed = null;
 let examExitGuardEnabled = false;
+
+// Anti-Cheat & Activity Monitoring
+let cheatingStats = {
+    tabSwitches: 0,
+    refreshes: 0
+};
+let lastCheatEventTime = 0;
+let cheatBannerTimer = null;
+
+/**
+ * Retrieves the attempt count for a student.
+ */
+function getStudentAttemptCount(cls, num) {
+    if (typeof window === 'undefined') return 0;
+    try {
+        const val = localStorage.getItem(`exam_attempt_${cls}_${num}`);
+        const parsed = parseInt(val, 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+/**
+ * Increments and saves the student attempt count.
+ */
+function incrementStudentAttemptCount(cls, num) {
+    const current = getStudentAttemptCount(cls, num) + 1;
+    try {
+        localStorage.setItem(`exam_attempt_${cls}_${num}`, current.toString());
+    } catch (e) {
+        console.error('Failed to save attempt count', e);
+    }
+    return current;
+}
+
+/**
+ * Retrieves theory choice question history to prevent repetition.
+ */
+function getTheoryChoiceHistory(cls, num) {
+    if (typeof window === 'undefined') return [];
+    try {
+        const raw = localStorage.getItem(`exam_choice_history_${cls}_${num}`);
+        return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+/**
+ * Saves a chosen theory question id to the student's choice history.
+ */
+function saveTheoryChoiceToHistory(cls, num, templateId) {
+    if (typeof window === 'undefined') return;
+    try {
+        let hist = getTheoryChoiceHistory(cls, num);
+        if (!hist.includes(templateId)) {
+            hist.push(templateId);
+        }
+        if (hist.length > 10) {
+            hist = hist.slice(hist.length - 10);
+        }
+        localStorage.setItem(`exam_choice_history_${cls}_${num}`, JSON.stringify(hist));
+    } catch (e) {
+        console.error('Failed to save theory choice history', e);
+    }
+}
+
+/**
+ * Gentle beep audio alert using Web Audio API.
+ */
+function playWarningBeep() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.25);
+    } catch (e) {
+        // Safe to ignore if audio blocked
+    }
+}
+
+/**
+ * Shows the floating anti-cheat warning banner with auto-fadeout.
+ */
+function showFloatingCheatBanner(count) {
+    const banner = document.getElementById('floating-cheat-banner');
+    if (!banner) return;
+    const msgEl = document.getElementById('floating-cheat-msg');
+    if (msgEl) {
+        msgEl.innerText = `⚠️ ตรวจพบการสลับหน้าจอ/เปิดแท็บอื่น (ครั้งที่ ${count}) ระบบได้บันทึกไว้แล้ว`;
+    }
+    banner.classList.remove('hidden');
+    requestAnimationFrame(() => {
+        banner.style.opacity = '1';
+        banner.style.transform = 'translateY(0)';
+    });
+
+    if (cheatBannerTimer) clearTimeout(cheatBannerTimer);
+    cheatBannerTimer = setTimeout(() => {
+        banner.style.opacity = '0';
+        banner.style.transform = 'translateY(-8px)';
+        setTimeout(() => {
+            banner.classList.add('hidden');
+        }, 300);
+    }, 3500);
+}
+
+/**
+ * Handles suspicious activity (window blur or document visibility hidden) with 500ms debounce.
+ */
+function handleSuspiciousActivity(type) {
+    if (!examIsActive || examSubmissionInProgress) return;
+    const now = Date.now();
+    if (now - lastCheatEventTime < 500) return; // Debounce 500ms
+    lastCheatEventTime = now;
+    cheatingStats.tabSwitches += 1;
+    showFloatingCheatBanner(cheatingStats.tabSwitches);
+    playWarningBeep();
+    debouncedAutoSave();
+}
+
+/**
+ * Initializes anti-cheat listeners.
+ */
+function initAntiCheatListeners() {
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && examIsActive) {
+            handleSuspiciousActivity('visibility_hidden');
+        }
+    });
+    window.addEventListener('blur', () => {
+        if (examIsActive) {
+            handleSuspiciousActivity('window_blur');
+        }
+    });
+}
+
+/**
+ * Auto-saves current exam state to localStorage.
+ */
+function saveExamState() {
+    if (!examIsActive || examSubmissionInProgress) return;
+    try {
+        const payload = {
+            examQuestions: currentExamQuestions,
+            studentInfo: examStudentInfo,
+            examStartTimestamp,
+            examDeadlineTimestamp,
+            examDurationSeconds,
+            remainingSeconds: examTimeRemaining,
+            userAnswers: getExamAnswers(),
+            cheatingStats: cheatingStats,
+            attempt: examStudentInfo.attempt || 1
+        };
+        localStorage.setItem(EXAM_STATE_KEY, JSON.stringify(payload));
+    } catch (e) {
+        console.error('Failed to auto-save exam state:', e);
+    }
+}
+
+const debouncedAutoSave = debounce(saveExamState, 300);
+
 
 // --- Helper Math / Format Functions ---
 function cleanAndParseNumber(str) {
@@ -487,32 +664,83 @@ function clearFirstLawCalc() {
 }
 
 
-// --- Dynamic Question Templates (16.4 Thermodynamics) ---
+// --- Clean Pairs for Heat Engine (Integer Efficiency & No Repeating Decimals) ---
+const CLEAN_ENGINE_PAIRS = [
+    { qh: 1000, qc: 600, w: 400, eff: 40 },
+    { qh: 1000, qc: 700, w: 300, eff: 30 },
+    { qh: 1000, qc: 800, w: 200, eff: 20 },
+    { qh: 1200, qc: 720, w: 480, eff: 40 },
+    { qh: 1500, qc: 900, w: 600, eff: 40 },
+    { qh: 1600, qc: 1200, w: 400, eff: 25 },
+    { qh: 2000, qc: 1200, w: 800, eff: 40 },
+    { qh: 2000, qc: 1400, w: 600, eff: 30 },
+    { qh: 2000, qc: 1500, w: 500, eff: 25 },
+    { qh: 2500, qc: 1500, w: 1000, eff: 40 },
+    { qh: 800, qc: 400, w: 400, eff: 50 },
+    { qh: 500, qc: 300, w: 200, eff: 40 }
+];
+
+// --- Dynamic Question Templates (16.4 Thermodynamics - 100% Clean Numbers) ---
 const QUESTION_TEMPLATES = [
-    // 16.4.1 พลังงานภายใน (Delta U)
+    // 16.4.1 พลังงานภายในระบบ (Delta U)
     {
         id: '16_4_1_dU_calc', topic: '16.4.1', type: 'numeric_single',
-        title: 'หาการเปลี่ยนแปลงพลังงานภายใน \\( (\\Delta U) \\)',
+        title: 'หาการเปลี่ยนแปลงพลังงานภายใน (ΔU)',
         inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
-        text: (p) => `แก๊สอุดมคติอะตอมเดี่ยวจำนวน \\(${p.n}\\) โมล มีอุณหภูมิเพิ่มขึ้นจาก \\(${p.t1}^\\circ\\text{C}\\) เป็น \\(${p.r ? `(${p.t2_base} + \\ ${p.r})` : p.t2}^\\circ\\text{C}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล (กำหนดให้ \\( R = 8.31 \\text{ J/mol K}\\))`,
+        text: (p) => `แก๊สอุดมคติอะตอมเดี่ยวในกระบอกสูบขยายตัวจากปริมาตร \\(${p.v1}\\) ลิตร เป็น \\(${p.v2}\\) ลิตร ภายใต้ความดันคงตัว \\(${p.p}\\text{ kPa}\\) พลังงานภายในระบบเปลี่ยนไปกี่จูล (กำหนด 1 ลิตร = \\(10^{-3} \\text{ m}^3\\))`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
-            const n = r ? getSeededRandomBase('16_4_1_dU_calc_n', r, 1, 3, 1) : 2; // 1, 2, 3 mol
-            const t1 = 27;
-            const t2_base = r ? getSeededRandomBase('16_4_1_dU_calc_t2', r, 37, 77, 10) : 47; // base = 37, 47, 57, 67, 77
-            const t2 = r ? t2_base + offset : 47;
-            const dT = t2 - t1;
-            const dU = 1.5 * n * 8.31 * dT;
+            const p_base = r ? getSeededRandomBase('16_4_1_dU_calc_p', r, 100, 250, 50) : 150;
+            const p = p_base + (offset % 5) * 10;
+            const v1 = r ? getSeededRandomBase('16_4_1_dU_calc_v1', r, 2, 4, 1) : 2;
+            const dV_even = r ? getSeededRandomBase('16_4_1_dU_calc_dv', r, 2, 6, 2) : 4;
+            const v2 = v1 + dV_even;
+            const dU = Math.round(1.5 * p * dV_even);
             return {
-                params: { n, t1, t2, t2_base, r: offset },
-                answers: [Math.round(dU).toString(), dU.toFixed(1)],
+                params: { p, v1, v2, dV: dV_even, r: offset },
+                answers: [dU.toString()],
                 answersRaw: [dU],
-                explanation: () => `
-      จากสมการการเปลี่ยนพลังงานภายใน: \\( \\Delta U = \\frac{3}{2}nR\\Delta T \\)<br>
-      หาอุณหภูมิที่เปลี่ยนไป: \\( \\Delta T = ${r ? `(${t2_base} + \\ ${offset})` : t2} - ${t1} = ${dT} \\text{ K} \\) (ผลต่างอุณหภูมิ \\( ^\\circ\\text{C} \\) และ K มีค่าเท่ากัน)<br>
-      แทนค่า: \\( \\Delta U = \\frac{3}{2}(${n})(8.31)(${dT}) \\)<br>
-      \\( \\Delta U = ${dU.toFixed(1)} \\text{ J} \\) (มีค่าเป็นบวก เพราะอุณหภูมิเพิ่มขึ้น)
-    `
+                explanation: () => `จาก \\( \\Delta U = \\frac{3}{2}P\\Delta V \\) แทนค่า \\( \\Delta U = 1.5 \\times (${p} \\times 10^3) \\times (${dV_even} \\times 10^{-3}) = ${dU} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_1_num1_argon', topic: '16.4.1', type: 'numeric_single',
+        title: 'หา ΔU ในภาชนะปิดปริมาตรคงตัว',
+        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
+        text: (p) => `แก๊สอุดมคติอะตอมเดี่ยวบรรจุในถังปิดมิดชิดปริมาตรคงตัว \\(${p.v}\\) ลิตร ได้รับความร้อนจนความดันเพิ่มขึ้นจาก \\(${p.p1}\\text{ kPa}\\) เป็น \\(${p.p2}\\text{ kPa}\\) พลังงานภายในของระบบแก๊สเปลี่ยนแปลงไปกี่จูล`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const v = r ? getSeededRandomBase('16_4_1_num1_v', r, 2, 8, 2) : 4;
+            const p1 = r ? getSeededRandomBase('16_4_1_num1_p1', r, 100, 180, 20) : 100;
+            const dP = r ? getSeededRandomBase('16_4_1_num1_dp', r, 60, 160, 20) : 100;
+            const p2 = p1 + dP;
+            const dU = Math.round(1.5 * v * dP);
+            return {
+                params: { v, p1, p2, dP, r: offset },
+                answers: [dU.toString()],
+                answersRaw: [dU],
+                explanation: () => `ปริมาตรคงตัว \\( \\Delta U = \\frac{3}{2}V\\Delta P = 1.5 \\times (${v} \\times 10^{-3}) \\times (${dP} \\times 10^3) = ${dU} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_1_dU_state_change', topic: '16.4.1', type: 'numeric_single',
+        title: 'การเปลี่ยนแปลงพลังงานภายในระบบจากสถานะ',
+        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
+        text: (p) => `ระบบแก๊สหนึ่งมีพลังงานภายในเริ่มต้น \\(${p.u1}\\text{ J}\\) ต่อมาได้รับความร้อนจนพลังงานภายในที่สถานะสุดท้ายกลายเป็น \\(${p.u2}\\text{ J}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const u1_base = r ? getSeededRandomBase('16_4_1_sc_u1', r, 600, 1200, 100) : 800;
+            const u1 = u1_base + (offset % 5) * 20;
+            const du_val = r ? getSeededRandomBase('16_4_1_sc_du', r, 500, 1500, 100) : 1000;
+            const u2 = u1 + du_val;
+            const dU = u2 - u1;
+            return {
+                params: { u1, u2, r: offset },
+                answers: [dU.toString()],
+                answersRaw: [dU],
+                explanation: () => `\\( \\Delta U = U_2 - U_1 = ${u2} - ${u1} = ${dU} \\text{ J} \\)`
             };
         }
     },
@@ -520,55 +748,85 @@ const QUESTION_TEMPLATES = [
     // 16.4.2 งานของแก๊ส (Work)
     {
         id: '16_4_2_work_calc', topic: '16.4.2', type: 'numeric_single',
-        title: 'หางานที่ทำโดยแก๊ส \\( (W) \\)',
-        inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `แก๊สในกระบอกสูบขยายตัวจากปริมาตร \\(${p.v1} \\times 10^{-3} \\text{ m}^3\\) เป็น \\(${p.v2} \\times 10^{-3} \\text{ m}^3\\) ภายใต้ความดันคงตัว \\(${p.r ? `(${p.p_base} + \\ ${p.r})` : p.p} \\times 10^3 \\text{ Pa}\\) แก๊สทำงานกี่จูล`,
+        title: 'หางานที่ทำโดยแก๊ส (W)',
+        inputs: [{ label: 'งาน \\( W \\) (Joule):' }],
+        text: (p) => `แก๊สในกระบอกสูบขยายตัวจากปริมาตร \\(${p.v1}\\) ลิตร เป็น \\(${p.v2}\\) ลิตร ภายใต้ความดันคงตัว \\(${p.p}\\text{ kPa}\\) แก๊สทำงานได้กี่จูล`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
-            const v1 = r ? getSeededRandomBase('16_4_2_work_calc_v1', r, 2, 4, 1) : 2;
-            const v2 = r ? getSeededRandomBase('16_4_2_work_calc_v2', r, 5, 8, 1) : 5; // expansion
-            const p_base = r ? getSeededRandomBase('16_4_2_work_calc_p', r, 100, 200, 10) : 150;
-            const p = r ? p_base + offset : 150; // in kPa, i.e. 10^3 Pa
-            const dV = (v2 - v1) * 1e-3;
-            const P_val = p * 1e3;
-            const W = P_val * dV;
+            const p_base = r ? getSeededRandomBase('16_4_2_wc_p', r, 100, 250, 50) : 150;
+            const p = p_base + (offset % 5) * 10;
+            const v1 = r ? getSeededRandomBase('16_4_2_wc_v1', r, 2, 4, 1) : 2;
+            const dV = r ? getSeededRandomBase('16_4_2_wc_dv', r, 3, 7, 1) : 4;
+            const v2 = v1 + dV;
+            const W = p * dV;
             return {
-                params: { v1, v2, p, p_base, r: offset },
-                answers: [Math.round(W).toString(), W.toFixed(1)],
+                params: { p, v1, v2, dV, r: offset },
+                answers: [W.toString()],
                 answersRaw: [W],
-                explanation: () => `
-      จากสมการงานของแก๊สที่ความดันคงตัว: \\( W = P\\Delta V = P(V_2 - V_1) \\)<br>
-      \\( \\Delta V = (${v2} \\times 10^{-3}) - (${v1} \\times 10^{-3}) = ${v2 - v1} \\times 10^{-3} \\text{ m}^3 \\)<br>
-      แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${offset})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
-      \\( W = ${W.toFixed(1)} \\text{ J} \\) (เครื่องหมายเป็นบวก เพราะแก๊สขยายตัวปริมาตรเพิ่มขึ้น)
-    `
+                explanation: () => `\\( W = P\\Delta V = (${p} \\times 10^3)(${dV} \\times 10^{-3}) = ${W} \\text{ J} \\)`
             };
         }
     },
     {
         id: '16_4_2_work_compress', topic: '16.4.2', type: 'numeric_single',
-        title: 'หางานกรณีถูกบีบอัด \\( (W) \\)',
-        inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `ออกแรงดันก้านกระบอกสูบให้แก๊สหดตัวจากปริมาตร \\(${p.v1}\\) ลิตร เหลือ \\(${p.v2}\\) ลิตร ภายใต้ความดันคงตัว \\(${p.r ? `(${p.p_base} + \\ ${p.r})` : p.p} \\times 10^3 \\text{ N/m}^2\\) งานที่แก๊สทำมีค่ากี่จูล (กำหนด 1 ลิตร = \\(10^{-3} \\text{ m}^3\\))`,
+        title: 'หางานกรณีแก๊สถูกบดอัด (W)',
+        inputs: [{ label: 'งาน \\( W \\) (Joule):' }],
+        text: (p) => `ออกแรงดันลูกสูบให้แก๊สหดตัวจากปริมาตร \\(${p.v1}\\) ลิตร เหลือ \\(${p.v2}\\) ลิตร ภายใต้ความดันคงตัว \\(${p.p}\\text{ kPa}\\) งานที่แก๊สทำมีค่ากี่จูล`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
-            const v1 = r ? getSeededRandomBase('16_4_2_work_compress_v1', r, 7, 9, 1) : 8;
-            const v2 = r ? getSeededRandomBase('16_4_2_work_compress_v2', r, 2, 4, 1) : 3; // compression
-            const p_base = r ? getSeededRandomBase('16_4_2_work_compress_p', r, 80, 150, 10) : 100;
-            const p = r ? p_base + offset : 100;
-            const dV = (v2 - v1) * 1e-3;
-            const W = p * 1e3 * dV; // will be negative
+            const p_base = r ? getSeededRandomBase('16_4_2_comp_p', r, 80, 200, 20) : 100;
+            const p = p_base + (offset % 5) * 10;
+            const v1 = r ? getSeededRandomBase('16_4_2_comp_v1', r, 7, 10, 1) : 8;
+            const v2 = r ? getSeededRandomBase('16_4_2_comp_v2', r, 2, 4, 1) : 3;
+            const dV = v2 - v1;
+            const W = p * dV;
             return {
-                params: { v1, v2, p, p_base, r: offset },
-                answers: [Math.round(W).toString(), W.toFixed(1), Math.round(-W).toString(), (-W).toFixed(1)],
+                params: { p, v1, v2, dV, r: offset },
+                answers: [W.toString(), (-W).toString()],
                 answersRaw: [[W, -W]],
-                explanation: () => `
-      จากสมการ: \\( W = P(V_2 - V_1) \\)<br>
-      \\( V_2 - V_1 = (${v2} - ${v1}) \\times 10^{-3} = ${v2 - v1} \\times 10^{-3} \\text{ m}^3 \\) (ปริมาตรลดลง ติดลบ)<br>
-      แทนค่า: \\( W = (${r ? `(${p_base} + \\ ${offset})` : p} \\times 10^3) \\times (${v2 - v1} \\times 10^{-3}) \\)<br>
-      \\( W = ${W.toFixed(1)} \\text{ J} \\) <br>
-      **(สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของงาน)**
-    `
+                explanation: () => `\\( W = P(V_2 - V_1) = (${p} \\times 10^3)(${dV} \\times 10^{-3}) = ${W} \\text{ J} \\) (ตอบได้ทั้งค่าติดลบหรือขนาดบวก)`
+            };
+        }
+    },
+    {
+        id: '16_4_2_work_pv_graph', topic: '16.4.2', type: 'numeric_single',
+        title: 'หางานจากพื้นที่ใต้กราฟ P-V รูปสี่เหลี่ยมคางหมู',
+        inputs: [{ label: 'งาน \\( W \\) (Joule):' }],
+        text: (p) => `แก๊สเกิดกระบวนการจากสถานะ A ไป B โดยความดันเปลี่ยนจาก \\(${p.p1}\\text{ kPa}\\) เป็น \\(${p.p2}\\text{ kPa}\\) และปริมาตรขยายตัวจาก \\(${p.v1}\\) ลิตร เป็น \\(${p.v2}\\) ลิตร จงหางานที่ทำโดยแก๊สจากพื้นที่ใต้กราฟ \\( P-V \\)`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const p1 = r ? getSeededRandomBase('16_4_2_pv_p1', r, 100, 160, 20) : 100;
+            const p2 = r ? getSeededRandomBase('16_4_2_pv_p2', r, 200, 300, 20) : 200;
+            const v1 = r ? getSeededRandomBase('16_4_2_pv_v1', r, 2, 4, 1) : 2;
+            const dV = r ? getSeededRandomBase('16_4_2_pv_dv', r, 3, 6, 1) : 4;
+            const v2 = v1 + dV;
+            const avgP = (p1 + p2) / 2;
+            const W = avgP * dV;
+            return {
+                params: { p1, p2, v1, v2, dV, r: offset },
+                answers: [W.toString()],
+                answersRaw: [W],
+                explanation: () => `\\( W = \\frac{1}{2}(P_1 + P_2)\\Delta V = \\frac{1}{2}(${p1} + ${p2}) \\times 10^3 \\times (${dV} \\times 10^{-3}) = ${W} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_2_num2_atm_L', topic: '16.4.2', type: 'numeric_single',
+        title: 'หางานจากการขยายตัว (atm, L)',
+        inputs: [{ label: 'งาน \\( W \\) (Joule):' }],
+        text: (p) => `แก๊สขยายตัวดันลูกสูบจากปริมาตร \\(${p.v1}\\) ลิตร เป็น \\(${p.v2}\\) ลิตร ภายใต้ความดันคงตัว \\(${p.p_atm}\\text{ atm}\\) งานที่ทำโดยแก๊สมีค่ากี่จูล (กำหนด 1 atm = \\(10^5 \\text{ Pa}\\), 1 ลิตร = \\(10^{-3} \\text{ m}^3\\))`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const p_atm = r ? getSeededRandomBase('16_4_2_num2_p', r, 1, 4, 1) : 2;
+            const v1 = r ? getSeededRandomBase('16_4_2_num2_v1', r, 2, 4, 1) : 2;
+            const dV = r ? getSeededRandomBase('16_4_2_num2_dv', r, 3, 7, 1) : 4;
+            const v2 = v1 + dV;
+            const W = p_atm * dV * 100;
+            return {
+                params: { p_atm, v1, v2, dV, r: offset },
+                answers: [W.toString()],
+                answersRaw: [W],
+                explanation: () => `\\( W = P\\Delta V = (${p_atm} \\times 10^5) \\times (${dV} \\times 10^{-3}) = ${W} \\text{ J} \\)`
             };
         }
     },
@@ -576,429 +834,380 @@ const QUESTION_TEMPLATES = [
     // 16.4.3 กฎข้อที่หนึ่ง (First Law Q = dU + W)
     {
         id: '16_4_3_law1_calc_Q', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'หาพลังงานความร้อนที่ให้แก่ระบบ \\( (Q) \\)',
-        inputs: [{ label: 'ความร้อน \\( Q \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `เมื่อให้ความร้อนแก่แก๊สในกระบอกสูบ ปรากฏว่าพลังงานภายในของแก๊สเพิ่มขึ้น \\(${p.r ? `(${p.dU_base} + \\ ${p.r})` : p.dU}\\text{ J}\\) และแก๊สขยายตัวดันลูกสูบทำงานได้ \\(${p.w}\\text{ J}\\) ความร้อนที่ระบบได้รับมีค่ากี่จูล`,
+        title: 'หาพลังงานความร้อนที่ให้แก่ระบบ (Q)',
+        inputs: [{ label: 'ความร้อน \\( Q \\) (Joule):' }],
+        text: (p) => `เมื่อให้ความร้อนแก่แก๊สในกระบอกสูบ พลังงานภายในของแก๊สเพิ่มขึ้น \\(${p.dU}\\text{ J}\\) และแก๊สขยายตัวทำงานได้ \\(${p.w}\\text{ J}\\) ความร้อนที่ระบบได้รับมีค่ากี่จูล`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
-            const dU_base = r ? getSeededRandomBase('16_4_3_law1_calc_Q_dU', r, 100, 200, 10) : 150;
-            const dU = r ? dU_base + offset : 150;
-            const w = r ? getSeededRandomBase('16_4_3_law1_calc_Q_w', r, 50, 100, 10) : 80;
+            const dU_base = r ? getSeededRandomBase('16_4_3_l1_du', r, 120, 240, 20) : 160;
+            const dU = dU_base + (offset % 5) * 10;
+            const w = r ? getSeededRandomBase('16_4_3_l1_w', r, 60, 140, 20) : 80;
             const Q = dU + w;
             return {
-                params: { dU, w, dU_base, r: offset },
+                params: { dU, w, r: offset },
                 answers: [Q.toString()],
                 answersRaw: [Q],
-                explanation: () => `
-      จากกฎข้อที่หนึ่งของอุณหพลศาสตร์: \\( Q = \\Delta U + W \\)<br>
-      - พลังงานภายในเพิ่มขึ้น \\( \\Rightarrow \\Delta U = +${r ? `(${dU_base} + \\ ${offset})` : dU} = +${dU} \\)<br>
-      - แก๊สทำงานขยายตัว \\( \\Rightarrow W = +${w} \\)<br>
-      แทนค่า: \\( Q = (+${dU}) + (+${w}) = ${Q} \\text{ J} \\)
-    `
+                explanation: () => `\\( Q = \\Delta U + W = (+${dU}) + (+${w}) = ${Q} \\text{ J} \\)`
             };
         }
     },
     {
         id: '16_4_3_law1_calc_W', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'หางานเมื่อความร้อนสูญเสีย \\( (W) \\)',
-        inputs: [{ label: 'งาน \\( W \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `ระบบแก๊สหนึ่งคายความร้อนออกสู่สิ่งแวดล้อม \\(${p.r ? `(${p.q_base} + \\ ${p.r})` : p.q_mag}\\text{ J}\\) ในขณะเดียวกันพบว่าพลังงานภายในระบบลดลง \\(${p.dU_mag}\\text{ J}\\) งานที่เกี่ยวข้องมีค่ากี่จูล`,
+        title: 'หางานเมื่อระบบคายความร้อน (W)',
+        inputs: [{ label: 'งาน \\( W \\) (Joule):' }],
+        text: (p) => `ระบบแก๊สคายความร้อนออกสู่สิ่งแวดล้อม \\(${p.q_mag}\\text{ J}\\) ส่งผลให้พลังงานภายในระบบลดลง \\(${p.du_mag}\\text{ J}\\) งานที่เกี่ยวข้องมีค่ากี่จูล`,
         generate: (r) => {
             const offset = getOffsetFromR(r);
-            const q_base = r ? getSeededRandomBase('16_4_3_law1_calc_W_q', r, 200, 400, 50) : 300;
-            const q_mag = r ? q_base + offset : 300;
-            const dU_mag = r ? getSeededRandomBase('16_4_3_law1_calc_W_dU', r, 100, 200, 25) : 150;
-            // Q = dU + W => W = Q - dU
-            const Q = -q_mag; // คาย
-            const dU = -dU_mag; // ลดลง
+            const q_base = r ? getSeededRandomBase('16_4_3_l1w_q', r, 250, 450, 50) : 300;
+            const q_mag = q_base + (offset % 5) * 10;
+            const du_mag = r ? getSeededRandomBase('16_4_3_l1w_du', r, 100, 200, 20) : 140;
+            const Q = -q_mag;
+            const dU = -du_mag;
             const W = Q - dU;
             return {
-                params: { q_mag, dU_mag, q_base, r: offset },
+                params: { q_mag, du_mag, r: offset },
                 answers: [W.toString(), (-W).toString()],
                 answersRaw: [[W, -W]],
-                explanation: () => `
-      ตั้งสมการกฎข้อ 1: \\( Q = \\Delta U + W \\) หรือ \\( W = Q - \\Delta U \\)<br>
-      **พิจารณาเครื่องหมายให้รอบคอบ:**<br>
-      - คายความร้อน \\( \\Rightarrow Q = -${r ? `(${q_base} + \\ ${offset})` : q_mag} = -${q_mag} \\text{ J} \\)<br>
-      - พลังงานภายในลดลง \\( \\Rightarrow \\Delta U = -${dU_mag} \\text{ J} \\)<br>
-      แทนค่า: \\( W = (-${q_mag}) - (-${dU_mag}) = ${W} \\text{ J} \\) <br>
-      **(สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของงาน)**
-    `
+                explanation: () => `\\( W = Q - \\Delta U = (-${q_mag}) - (-${du_mag}) = ${W} \\text{ J} \\)`
             };
         }
     },
+    {
+        id: '16_4_3_num3_simple', topic: '16.4.3-calc', type: 'numeric_single',
+        title: 'หา ΔU จากกระบวนการขยายตัว',
+        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
+        text: (p) => `ระบบได้รับความร้อน \\(${p.q}\\text{ J}\\) ส่งผลให้แก๊สขยายตัวและทำงานผลักลูกสูบได้ \\(${p.w}\\text{ J}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const q_base = r ? getSeededRandomBase('16_4_3_n3_q', r, 400, 800, 50) : 600;
+            const q = q_base + (offset % 5) * 10;
+            const w = r ? getSeededRandomBase('16_4_3_n3_w', r, 120, 260, 20) : 180;
+            const dU = q - w;
+            return {
+                params: { q, w, r: offset },
+                answers: [dU.toString()],
+                answersRaw: [dU],
+                explanation: () => `\\( \\Delta U = Q - W = ${q} - ${w} = ${dU} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_3_num7_all_neg', topic: '16.4.3-calc', type: 'numeric_single',
+        title: 'ระบบคายความร้อนและถูกบีบอัด',
+        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
+        text: (p) => `แก๊สในกระบอกสูบคายความร้อนออกสู่สิ่งแวดล้อม \\(${p.q}\\text{ J}\\) และในขณะเดียวกันปริมาตรหดตัวลงโดยมีสิ่งแวดล้อมทำงานให้ \\(${p.w}\\text{ J}\\) พลังงานภายในระบบเปลี่ยนไปกี่จูล`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const q_base = r ? getSeededRandomBase('16_4_3_n7_q', r, 250, 450, 50) : 350;
+            const q = q_base + (offset % 5) * 10;
+            const w = r ? getSeededRandomBase('16_4_3_n7_w', r, 100, 200, 25) : 150;
+            const dU = -q - (-w);
+            return {
+                params: { q, w, r: offset },
+                answers: [dU.toString(), (-dU).toString()],
+                answersRaw: [[dU, -dU]],
+                explanation: () => `\\( \\Delta U = Q - W = (-${q}) - (-${w}) = ${dU} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_3_num10_compress_heat', topic: '16.4.3-calc', type: 'numeric_single',
+        title: 'หา ΔU เมื่อรับความร้อนและถูกบดอัด',
+        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
+        text: (p) => `ระบบได้รับความร้อน \\(${p.q}\\text{ J}\\) แต่ในขณะเดียวกันปริมาตรของแก๊สหดตัวลงโดยสิ่งแวดล้อมทำงานให้ \\(${p.w}\\text{ J}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const q_base = r ? getSeededRandomBase('16_4_3_n10_q', r, 300, 600, 50) : 450;
+            const q = q_base + (offset % 5) * 10;
+            const w = r ? getSeededRandomBase('16_4_3_n10_w', r, 100, 220, 20) : 140;
+            const dU = q - (-w);
+            return {
+                params: { q, w, r: offset },
+                answers: [dU.toString()],
+                answersRaw: [dU],
+                explanation: () => `\\( \\Delta U = Q - W = ${q} - (-${w}) = ${dU} \\text{ J} \\)`
+            };
+        }
+    },
+
+    // กระบวนการ 4 แบบ
+    {
+        id: '16_4_3_proc_isochoric', topic: '16.4.3-calc', type: 'numeric_double',
+        title: 'ระบบปริมาตรคงที่ (Isochoric)',
+        inputs: [
+            { label: '1) งาน \\( W \\) (Joule):' },
+            { label: '2) \\( \\Delta U \\) (Joule):' }
+        ],
+        text: (p) => `กระบอกสูบถูกยึดให้ปริมาตรคงที่ จากนั้นให้ความร้อนแก่ระบบแก๊สภายในจำนวน \\(${p.q}\\text{ J}\\) จงหางานที่แก๊สทำได้ (\\(W\\)) และพลังงานภายในที่เปลี่ยนไป (\\(\\Delta U\\))`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const q_base = r ? getSeededRandomBase('16_4_3_isc_q', r, 250, 550, 50) : 350;
+            const q = q_base + (offset % 5) * 10;
+            const w = 0;
+            const dU = q;
+            return {
+                params: { q, r: offset },
+                answers: [w.toString(), dU.toString()],
+                answersRaw: [w, dU],
+                explanation: () => `ปริมาตรคงที่ \\( W = 0 \\text{ J} \\), \\( \\Delta U = Q = ${q} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_3_proc_isobaric', topic: '16.4.3-calc', type: 'numeric_double',
+        title: 'กระบวนการความดันคงตัวสำหรับแก๊สอะตอมเดี่ยว (Isobaric)',
+        inputs: [
+            { label: '1) งาน \\( W \\) (Joule):' },
+            { label: '2) \\( \\Delta U \\) (Joule):' }
+        ],
+        text: (p) => `ให้ความร้อน \\(${p.q}\\text{ J}\\) แก่แก๊สอุดมคติอะตอมเดี่ยวในกระบอกสูบที่ความดันคงตัว จงหางานที่แก๊สทำ (\\(W\\)) และพลังงานภายในที่เปลี่ยนไป (\\(\\Delta U\\)) (กำหนดอัตราส่วน \\( \\Delta U : W : Q = 3 : 2 : 5 \\))`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const q_mult = r ? getSeededRandomBase('16_4_3_isob_q', r, 500, 2500, 500) : 1000;
+            const q = q_mult;
+            const dU = Math.round(0.6 * q);
+            const w = Math.round(0.4 * q);
+            return {
+                params: { q, r: offset },
+                answers: [w.toString(), dU.toString()],
+                answersRaw: [w, dU],
+                explanation: () => `สำหรับแก๊สอะตอมเดี่ยว \\( W = \\frac{2}{5}Q = ${w} \\text{ J} \\) และ \\( \\Delta U = \\frac{3}{5}Q = ${dU} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_3_proc_isothermal', topic: '16.4.3-calc', type: 'numeric_single',
+        title: 'ระบบอุณหภูมิคงที่ (Isothermal)',
+        inputs: [{ label: 'ความร้อน \\( Q \\) (Joule):' }],
+        text: (p) => `แก๊สอุดมคติขยายตัวโดยควบคุมให้อุณหภูมิคงที่ตลอดกระบวนการ ถ้าแก๊สทำงานได้ \\(${p.w}\\text{ J}\\) ระบบนี้รับความร้อนเข้ามากี่จูล`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const w_base = r ? getSeededRandomBase('16_4_3_isot_w', r, 300, 700, 100) : 500;
+            const w = w_base + (offset % 5) * 20;
+            const Q = w;
+            return {
+                params: { w, r: offset },
+                answers: [Q.toString()],
+                answersRaw: [Q],
+                explanation: () => `อุณหภูมิคงที่ \\( \\Delta U = 0 \\implies Q = W = ${w} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_3_proc_adiabatic', topic: '16.4.3-calc', type: 'numeric_single',
+        title: 'กระบวนการแอเดียแบติก (Adiabatic)',
+        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
+        text: (p) => `กระบอกสูบหุ้มฉนวนกันความร้อนอย่างสมบูรณ์ ถูกกดลูกสูบบดอัดแก๊สอย่างรวดเร็วโดยสิ่งแวดล้อมทำงานให้แก๊ส \\(${p.w}\\text{ J}\\) พลังงานภายในของแก๊สเปลี่ยนไปกี่จูล`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const w_base = r ? getSeededRandomBase('16_4_3_ad_w', r, 150, 400, 50) : 250;
+            const w = w_base + (offset % 5) * 10;
+            const dU = w;
+            return {
+                params: { w, r: offset },
+                answers: [dU.toString(), "+" + dU.toString()],
+                answersRaw: [dU],
+                explanation: () => `\\( Q = 0 \\implies \\Delta U = -W = -(-${w}) = +${dU} \\text{ J} \\)`
+            };
+        }
+    },
+
+    // เครื่องยนต์ความร้อนและวัฏจักร
+    {
+        id: '16_4_3_num9_heat_engine', topic: '16.4.3-calc', type: 'numeric_single',
+        title: 'หลักการทำงานเครื่องยนต์ความร้อน (ความร้อนทิ้ง)',
+        inputs: [{ label: 'คายความร้อนทิ้ง \\( Q_C \\) (Joule):' }],
+        text: (p) => `ใน 1 วัฏจักร เครื่องยนต์ความร้อนรับความร้อนจากแหล่งอุณหภูมิสูงมา \\(${p.qh}\\text{ J}\\) และทำงานได้ \\(${p.w}\\text{ J}\\) เครื่องยนต์นี้คายความร้อนทิ้งกี่จูล`,
+        generate: (r) => {
+            const pairIdx = r ? getSeededRandomBase('16_4_3_eng_p', r, 0, CLEAN_ENGINE_PAIRS.length - 1, 1) : 0;
+            const pair = CLEAN_ENGINE_PAIRS[pairIdx];
+            const qh = pair.qh;
+            const w = pair.w;
+            const qc = pair.qc;
+            return {
+                params: { qh, w, qc },
+                answers: [qc.toString()],
+                answersRaw: [qc],
+                explanation: () => `\\( Q_C = Q_H - W = ${qh} - ${w} = ${qc} \\text{ J} \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_3_engine_efficiency', topic: '16.4.3-calc', type: 'numeric_single',
+        title: 'ประสิทธิภาพเชิงความร้อนของเครื่องยนต์ความร้อน',
+        inputs: [{ label: 'ประสิทธิภาพ \\( e \\) (%):' }],
+        text: (p) => `เครื่องยนต์ความร้อนรับความร้อน \\(${p.qh}\\text{ J}\\) และคายความร้อนทิ้ง \\(${p.qc}\\text{ J}\\) จงหาประสิทธิภาพเชิงความร้อนของเครื่องยนต์ (ตอบเป็นเปอร์เซ็นต์ เช่น 40)`,
+        generate: (r) => {
+            const pairIdx = r ? getSeededRandomBase('16_4_3_eff_p', r, 0, CLEAN_ENGINE_PAIRS.length - 1, 1) : 0;
+            const pair = CLEAN_ENGINE_PAIRS[pairIdx];
+            const qh = pair.qh;
+            const qc = pair.qc;
+            const eff = pair.eff;
+            const decEff = (eff / 100).toFixed(2);
+            return {
+                params: { qh, qc, eff },
+                answers: [eff.toString(), eff + "%", decEff, (eff / 100).toString()],
+                answersRaw: [[eff, eff / 100]],
+                explanation: () => `\\( e = \\frac{Q_H - Q_C}{Q_H} \\times 100\\% = \\frac{${qh} - ${qc}}{${qh}} \\times 100\\% = ${eff}\\% \\)`
+            };
+        }
+    },
+    {
+        id: '16_4_3_cyclic_work', topic: '16.4.3-calc', type: 'numeric_single',
+        title: 'งานสุทธิในกระบวนการแบบวัฏจักร (Cyclic Process)',
+        inputs: [{ label: 'งานสุทธิ \\( W_{\\text{net}} \\) (Joule):' }],
+        text: (p) => `แก๊สทำงานครบ 1 วัฏจักร โดยรับความร้อนสุทธิจากภายนอกเข้ามา \\(${p.qin}\\text{ J}\\) และคายความร้อนออก \\(${p.qout}\\text{ J}\\) งานสุทธิที่ระบบทำได้มีค่ากี่จูล`,
+        generate: (r) => {
+            const offset = getOffsetFromR(r);
+            const qin_base = r ? getSeededRandomBase('16_4_3_cyc_in', r, 800, 1600, 100) : 1000;
+            const qin = qin_base + (offset % 5) * 20;
+            const qout = r ? getSeededRandomBase('16_4_3_cyc_out', r, 300, 600, 50) : 400;
+            const wnet = qin - qout;
+            return {
+                params: { qin, qout, r: offset },
+                answers: [wnet.toString()],
+                answersRaw: [wnet],
+                explanation: () => `ครบ 1 วัฏจักร \\( \\Delta U = 0 \\implies W_{\\text{net}} = Q_{\\text{in}} - Q_{\\text{out}} = ${qin} - ${qout} = ${wnet} \\text{ J} \\)`
+            };
+        }
+    },
+
+    // ทฤษฎีและมโนทัศน์ (Choice 4 ตัวเลือก)
     {
         id: '16_4_3_concept_signs', topic: '16.4.3-concept', type: 'choice',
         title: 'ทฤษฎีเครื่องหมายอุณหพลศาสตร์',
         choices: [
             '\\( Q \\) เป็นบวก และ \\( W \\) เป็นลบ',
             '\\( Q \\) เป็นลบ และ \\( W \\) เป็นบวก',
-            '\\( \\Delta U \\) เป็นบวก และ \\( W \\) เป็นลบ',
-            '\\( Q \\) เป็นลบ และ \\( \\Delta U \\) เป็นลบ'
+            '\\( Q \\) เป็นบวก และ \\( W \\) เป็นบวก',
+            '\\( Q \\) เป็นลบ และ \\( W \\) เป็นลบ'
         ],
         text: () => `ในกระบวนการที่ "ระบบรับความร้อนจากสิ่งแวดล้อม และระบบถูกบีบอัดให้ปริมาตรเล็กลง" ข้อกำหนดเครื่องหมายในกฎข้อที่หนึ่งข้อใดถูกต้อง`,
-        generate: (r) => ({
+        generate: () => ({
             params: {},
             answers: ['\\( Q \\) เป็นบวก และ \\( W \\) เป็นลบ'],
             answersRaw: [0],
-            explanation: () => `
-      - **ระบบรับความร้อน:** ระบบได้พลังงานเข้ามา ดังนั้น \\( Q \\) จึงมีเครื่องหมายเป็น **บวก \\( (+) \\)**<br>
-      - **ถูกบีบอัดปริมาตรเล็กลง:** สิ่งแวดล้อมเป็นฝ่ายทำงานให้ระบบ (ไม่ใช่แก๊สทำงานเอง) ดังนั้นงาน \\( W \\) จึงมีเครื่องหมายเป็น **ลบ \\( (-) \\)**
-    `
+            explanation: () => `ระบบรับความร้อน: Q > 0 (บวก), ถูกบีบอัดปริมาตรลดลง: W < 0 (ลบ)`
         })
     },
-
-    // --- แบบฝึกหัดเพิ่มเติม 15 ข้อ (ปรนัย 5 ข้อ, อัตนัย 10 ข้อ) ตาม สสวท. ---
-
-    // ปรนัย 1: ปริมาตรคงตัว (Isochoric)
     {
         id: '16_4_3_ch1_isochoric', topic: '16.4.3-concept', type: 'choice',
-        title: 'กระบวนการปริมาตรคงตัว',
+        title: 'กระบวนการปริมาตรคงตัว (Isochoric)',
         choices: [
             '\\( W = 0 \\) และ \\( Q = \\Delta U \\)',
             '\\( \\Delta U = 0 \\) และ \\( Q = W \\)',
             '\\( Q = 0 \\) และ \\( \\Delta U = -W \\)',
-            '\\( W \\) มีค่าเป็นบวก และ \\( \\Delta U \\) เป็นลบ'
+            '\\( W > 0 \\) และ \\( \\Delta U < 0 \\)'
         ],
-        text: () => `หากให้ความร้อนแก่แก๊สในภาชนะปิดมิดชิดที่แข็งเกร็ง (ปริมาตรคงตัว) ข้อใดกล่าวถึงการเปลี่ยนแปลงพลังงานตามกฎข้อที่หนึ่งของอุณหพลศาสตร์ได้ถูกต้องที่สุด`,
-        generate: (r) => ({
+        text: () => `หากให้ความร้อนแก่แก๊สในภาชนะปิดมิดชิดที่แข็งเกร็ง (ปริมาตรคงตัว) ข้อใดกล่าวถึงการเปลี่ยนแปลงพลังงานตามกฎข้อที่หนึ่งได้ถูกต้องที่สุด`,
+        generate: () => ({
             params: {},
             answers: ['\\( W = 0 \\) และ \\( Q = \\Delta U \\)'],
             answersRaw: [0],
-            explanation: () => `เมื่อปริมาตรคงตัว จะไม่มีการขยายตัวหรือหดตัวของแก๊ส ทำให้งานที่ทำโดยแก๊ส **\\( W = 0 \\)** <br>จากสมการ \\( Q = \\Delta U + W \\) เมื่อ \\( W = 0 \\) จะได้ **\\( Q = \\Delta U \\)** (ความร้อนทั้งหมดถูกใช้เพื่อเพิ่มพลังงานภายใน)`
+            explanation: () => `เมื่อปริมาตรคงตัว \\( \\Delta V = 0 \\implies W = 0 \\) ดังนั้น \\( Q = \\Delta U \\)`
         })
     },
-    // ปรนัย 2: อุณหภูมิคงตัว (Isothermal)
     {
         id: '16_4_3_ch2_isothermal', topic: '16.4.3-concept', type: 'choice',
-        title: 'กระบวนการอุณหภูมิคงตัว',
+        title: 'กระบวนการอุณหภูมิคงตัว (Isothermal)',
         choices: [
             '\\( \\Delta U = 0 \\) และ \\( Q = W \\)',
             '\\( W = 0 \\) และ \\( Q = \\Delta U \\)',
             '\\( Q = 0 \\) และ \\( W = -\\Delta U \\)',
-            'พลังงานภายในระบบลดลงอย่างต่อเนื่อง'
+            '\\( \\Delta U < 0 \\) และ \\( Q = 0 \\)'
         ],
         text: () => `แก๊สอุดมคติขยายตัวอย่างช้าๆ โดยมีอุปกรณ์ควบคุมให้อุณหภูมิของระบบคงตัวตลอดกระบวนการ ข้อใดสรุปได้ถูกต้อง`,
-        generate: (r) => ({
+        generate: () => ({
             params: {},
             answers: ['\\( \\Delta U = 0 \\) และ \\( Q = W \\)'],
             answersRaw: [0],
-            explanation: () => `อุณหภูมิของแก๊สอุดมคติคงตัว (\\( \\Delta T = 0 \\)) ส่งผลให้พลังงานภายในระบบไม่เปลี่ยนแปลง **\\( (\\Delta U = 0) \\)** <br>จากกฎข้อที่หนึ่ง \\( Q = \\Delta U + W \\) จะได้ **\\( Q = W \\)** (ความร้อนที่รับเข้ามาถูกเปลี่ยนเป็นงานทั้งหมด)`
+            explanation: () => `อุณหภูมิคงตัว \\( \\Delta T = 0 \\implies \\Delta U = 0 \\) ทำให้ \\( Q = W \\)`
         })
     },
-    // ปรนัย 3: อะเดียแบติก (Adiabatic)
     {
         id: '16_4_3_ch3_adiabatic', topic: '16.4.3-concept', type: 'choice',
-        title: 'กระบวนการอะเดียแบติก (ขยายตัว)',
+        title: 'กระบวนการแอเดียแบติก (ขยายตัว)',
         choices: [
-            'พลังงานภายในลดลง และ อุณหภูมิลดลง',
-            'พลังงานภายในเพิ่มขึ้น และ อุณหภูมิเพิ่มขึ้น',
-            'พลังงานภายในคงที่ และ อุณหภูมิคงที่',
-            'พลังงานภายในลดลง แต่ อุณหภูมิเพิ่มขึ้น'
+            'พลังงานภายในลดลง \\( (\\Delta U < 0) \\) และอุณหภูมิลดลง',
+            'พลังงานภายในเพิ่มขึ้น \\( (\\Delta U > 0) \\) และอุณหภูมิเพิ่มขึ้น',
+            'พลังงานภายในคงที่ \\( (\\Delta U = 0) \\) และอุณหภูมิคงที่',
+            'พลังงานภายในลดลง แต่ความดันเพิ่มขึ้น'
         ],
         text: () => `ระบบแก๊สอุดมคติเกิดการขยายตัวอย่างรวดเร็วมากจนไม่มีการถ่ายโอนความร้อนเข้าหรือออกจากระบบ \\( (Q = 0) \\) พลังงานภายในระบบและอุณหภูมิจะเป็นอย่างไร`,
-        generate: (r) => ({
+        generate: () => ({
             params: {},
-            answers: ['พลังงานภายในลดลง และ อุณหภูมิลดลง'],
+            answers: ['พลังงานภายในลดลง \\( (\\Delta U < 0) \\) และอุณหภูมิลดลง'],
             answersRaw: [0],
-        explanation: () => `ไม่มีการถ่ายโอนความร้อน \\( (Q = 0) \\) และแก๊สขยายตัว (W เป็นบวก)<br>จาก \\( Q = \\Delta U + W \\Rightarrow 0 = \\Delta U + W \\Rightarrow \\Delta U = -W \\)<br>จะได้ \\( \\Delta U \\) มีค่าติดลบ (พลังงานภายในลดลง) ซึ่งหมายความว่า **อุณหภูมิต้องลดลง** ด้วย`
+            explanation: () => `\\( Q = 0 \\implies \\Delta U = -W \\) แก๊สขยายตัว \\( W > 0 \\implies \\Delta U < 0 \\) อุณหภูมิต้องลดลง`
         })
     },
-    // ปรนัย 4: วัฏจักร (Cyclic Process)
     {
         id: '16_4_3_ch4_cyclic', topic: '16.4.3-concept', type: 'choice',
-        title: 'กระบวนการแบบวัฏจักร',
+        title: 'กระบวนการแบบวัฏจักร (Cyclic Process)',
         choices: [
-            'การเปลี่ยนแปลงพลังงานภายใน \\( (\\Delta U) \\)',
-            'งานรวมที่ทำโดยแก๊ส \\( (W) \\)',
-            'ความร้อนรวมที่ระบบได้รับ \\( (Q) \\)',
-            'ความดันสูงสุดของแก๊ส'
+            'การเปลี่ยนแปลงพลังงานภายในรวม \\( (\\Delta U_{\\text{net}} = 0) \\)',
+            'งานรวมที่ทำโดยแก๊สเป็นศูนย์เสมอ \\( (W_{\\text{net}} = 0) \\)',
+            'ความร้อนสุทธิที่รับเข้าเป็นศูนย์เสมอ \\( (Q_{\\text{net}} = 0) \\)',
+            'ความดันสูงสุดต้องคงที่ตลอดวัฏจักร'
         ],
-        text: () => `เมื่อแก๊สเกิดการเปลี่ยนแปลงแบบวัฏจักร \\( (\\text{Cyclic process}) \\) โดยวนกลับมาสู่สถานะเริ่มต้น ปริมาณในข้อใดจะมีการเปลี่ยนแปลงรวมเป็นศูนย์เสมอ`,
-        generate: (r) => ({
+        text: () => `เมื่อแก๊สเกิดการเปลี่ยนแปลงแบบวัฏจักร (วนกลับมาสู่สถานะเริ่มต้น) ปริมาณในข้อใดจะมีการเปลี่ยนแปลงรวมเป็นศูนย์เสมอ`,
+        generate: () => ({
             params: {},
-            answers: ['การเปลี่ยนแปลงพลังงานภายใน \\( (\\Delta U) \\)'],
+            answers: ['การเปลี่ยนแปลงพลังงานภายในรวม \\( (\\Delta U_{\\text{net}} = 0) \\)'],
             answersRaw: [0],
-            explanation: () => `พลังงานภายใน \\( (U) \\) เป็นฟังก์ชันสถานะ (State Function) ที่ขึ้นอยู่กับอุณหภูมิ หากระบบกลับมาที่สถานะเริ่มต้น อุณหภูมิจะกลับมาเท่าเดิม ทำให้ **\\( \\Delta U = 0 \\)** เสมอใน 1 วัฏจักร`
+            explanation: () => `\\( U \\) เป็นฟังก์ชันสถานะ เมื่อกลับมาสถานะเริ่มต้น \\( \\Delta U = 0 \\)`
         })
     },
-    // ปรนัย 5: เครื่องยนต์ความร้อน
     {
         id: '16_4_3_ch5_engine', topic: '16.4.3-concept', type: 'choice',
-        title: 'หลักการเครื่องยนต์ความร้อน',
+        title: 'ข้อจำกัดของเครื่องยนต์ความร้อน (กฎข้อที่สอง)',
         choices: [
-            'ต้องมีการคายความร้อนบางส่วนทิ้งสู่สิ่งแวดล้อมที่มีอุณหภูมิต่ำกว่า',
-            'ความร้อนทั้งหมดถูกนำไปใช้เพิ่มพลังงานภายในระบบแทน',
-            'แก๊สที่ใช้ในเครื่องยนต์มีมวลน้อยเกินไป',
-            'แรงเสียดทาน of ลูกสูบมีค่ามากเกินไป'
+            'ต้องมีการคายความร้อนบางส่วนทิ้งสู่แหล่งอุณหภูมิต่ำเสมอ',
+            'ความร้อนทั้งหมดถูกนำไปเปลี่ยนเป็นพลังงานศักย์ของแก๊ส',
+            'มวลของแก๊สจะค่อยๆ ระเหยหายไปในแต่ละรอบ',
+            'แก๊สทำงานขยายตัวได้เพียงครึ่งรอบเท่านั้น'
         ],
-        text: () => `ตามหลักอุณหพลศาสตร์ ในเครื่องยนต์ความร้อน \\( (\\text{Heat Engine}) \\) ไม่สามารถเปลี่ยนความร้อนที่รับมาให้กลายเป็นงานได้ทั้งหมด 100% เพราะเหตุใดเป็นหลักการสำคัญ`,
-        generate: (r) => ({
+        text: () => `ตามกฎข้อที่สองของอุณหพลศาสตร์ ในเครื่องยนต์ความร้อนไม่สามารถเปลี่ยนความร้อนที่รับมาให้กลายเป็นงานได้ทั้งหมด 100% เพราะเหตุใดเป็นหลักการสำคัญ`,
+        generate: () => ({
             params: {},
-            answers: ['ต้องมีการคายความร้อนบางส่วนทิ้งสู่สิ่งแวดล้อมที่มีอุณหภูมิต่ำกว่า'],
+            answers: ['ต้องมีการคายความร้อนบางส่วนทิ้งสู่แหล่งอุณหภูมิต่ำเสมอ'],
             answersRaw: [0],
-            explanation: () => `ตามกฎข้อที่สองของอุณหพลศาสตร์ เครื่องยนต์ความร้อนทุกชนิดทำงานเป็นวัฏจักร จะต้องรับความร้อนจากแหล่งอุณหภูมิสูง นำไปทำงาน และ **ต้องคายความร้อนที่เหลือทิ้ง** สู่แหล่งอุณหภูมิต่ำเสมอ ไม่มีเครื่องยนต์ใดมีประสิทธิภาพ 100% ได้`
+            explanation: () => `เครื่องยนต์ความร้อนทำงานเป็นวัฏจักร ต้องคายความร้อนทิ้งสู่แหล่งอุณหภูมิต่ำเสมอ`
         })
     },
-
-    // อัตนัย 1: หา dU จากมวล
     {
-        id: '16_4_1_num1_argon', topic: '16.4.1', type: 'numeric_single',
-        title: 'หา \\( \\Delta U \\) ของแก๊สอาร์กอน',
-        inputs: [{ label: '\\( \\Delta U \\) (Joule):' }],
-        text: (p) => `แก๊สอาร์กอน (Ar) มวล \\(${p.m}\\) กรัม บรรจุในกระบอกสูบ มีอุณหภูมิเพิ่มขึ้น \\(${p.r ? `(${p.dT_base} + \\ ${p.r})` : p.dT}\\text{ K}\\) พลังงานภายในระบบเปลี่ยนแปลงไปกี่จูล (กำหนดมวลโมลาร์ Ar = 40 g/mol, \\( R = 8.31 \\text{ J/(mol K)}\\))`,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const m = r ? getSeededRandomBase('16_4_1_num1_argon_m', r, 40, 120, 20) : 80; // 40, 60, 80, 100, 120 g
-            const dT_base = r ? getSeededRandomBase('16_4_1_num1_argon_dT', r, 10, 30, 5) : 20;
-            const dT = r ? dT_base + offset : 20; // 10, 15, 20, 25 K
-            const n = m / 40;
-            const dU = 1.5 * n * 8.31 * dT;
-            return {
-                params: { m, dT, dT_base, r: offset },
-                answers: [Math.round(dU).toString(), dU.toFixed(1), dU.toFixed(2)],
-                answersRaw: [dU],
-                explanation: () => `
-      หาจำนวนโมล: \\( n = \\frac{m}{M} = \\frac{${m}}{40} = ${n} \\text{ mol} \\)<br>
-      จากสมการ: \\( \\Delta U = \\frac{3}{2}nR\\Delta T \\)<br>
-      แทนค่า: \\( \\Delta U = \\frac{3}{2}(${n})(8.31)(${r ? `(${dT_base} + \\ ${offset})` : dT}) \\)<br>
-      \\( \\Delta U = ${dU.toFixed(1)} \\text{ J} \\)
-    `
-            };
-        }
-    },
-    // อัตนัย 2: งานจาก atm และ L
-    {
-        id: '16_4_2_num2_atm_L', topic: '16.4.2', type: 'numeric_single',
-        title: 'หางานจากการขยายตัว (atm, L)',
-        inputs: [{ label: 'งาน \\( W \\) (Joule):' }],
-        text: (p) => `แก๊สขยายตัวดันลูกสูบจากปริมาตร \\(${p.v1}\\) ลิตร เป็น \\(${p.r ? `(${p.v2_base} + \\ ${p.r})` : p.v2}\\) ลิตร ภายใต้ความดันคงตัว \\(${p.P_atm}\\) บรรยากาศ (atm) งานที่ทำโดยแก๊สมีค่ากี่จูล (กำหนด 1 atm = \\(10^5 \\text{ Pa}\\), 1 ลิตร = \\(10^{-3} \\text{ m}^3\\))`,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const v1 = r ? getSeededRandomBase('16_4_2_num2_v1', r, 2, 4, 1) : 2;
-            const v2_base = r ? getSeededRandomBase('16_4_2_num2_v2', r, 5, 8, 1) : 5; // expansion
-            const v2 = r ? v2_base + offset : 5;
-            const P_atm = r ? getSeededRandomBase('16_4_2_num2_p', r, 1, 3, 0.5) : 1.5;
-            const dV_L = v2 - v1;
-            const W = P_atm * 1e5 * (dV_L * 1e-3); // essentially dV_L * P_atm * 100
-            return {
-                params: { v1, v2, v2_base, P_atm, r: offset },
-                answers: [Math.round(W).toString(), W.toFixed(1)],
-                answersRaw: [W],
-                explanation: () => `
-      ความดัน: \\( P = ${P_atm} \\times 10^5 \\text{ Pa} \\)<br>
-      ปริมาตรเปลี่ยน: \\( \\Delta V = (${r ? `(${v2_base} + \\ ${offset})` : v2} - ${v1}) \\times 10^{-3} = ${dV_L} \\times 10^{-3} \\text{ m}^3 \\)<br>
-      งานที่ทำ: \\( W = P\\Delta V = (${P_atm} \\times 10^5) \\times (${dV_L} \\times 10^{-3}) \\)<br>
-      \\( W = ${W.toFixed(1)} \\text{ J} \\)
-    `
-            };
-        }
-    },
-    // อัตนัย 3: หา dU แบบท้ายบท
-    {
-        id: '16_4_3_num3_simple', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'หา \\( \\Delta U \) จากกระบวนการขยายตัว',
-        inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `ระบบให้ความร้อนแก่แก๊ส \\(${p.r ? `(${p.Q_base} + \\ ${p.r})` : p.Q}\\text{ J}\\) ส่งผลให้แก๊สขยายตัวและทำงานผลักลูกสูบได้ \\(${p.W}\\text{ J}\\) พลังงานภายในระบบเปลี่ยนแปลงไปเท่าใด`,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const Q_base = r ? getSeededRandomBase('16_4_3_num3_Q', r, 400, 800, 50) : 600;
-            const Q = r ? Q_base + offset : 600;
-            const W = r ? getSeededRandomBase('16_4_3_num3_W', r, 100, 200, 20) : 150;
-            const dU = Q - W;
-            return {
-                params: { Q, W, Q_base, r: offset },
-                answers: [dU.toString()],
-                answersRaw: [dU],
-                explanation: () => `
-      จากกฎข้อที่หนึ่ง: \\( Q = \\Delta U + W \\) <br>
-      จัดรูปหา \\( \\Delta U \\) จะได้: \\( \\Delta U = Q - W \\)<br>
-      แทนค่า (รับความร้อนเป็นบวก, แก๊สทำงานเป็นบวก): \\( \\Delta U = ${r ? `(${Q_base} + \\ ${offset})` : Q} - ${W} = ${dU} \\text{ J} \\)
-    `
-            };
-        }
-    },
-    // อัตนัย 4: ปริมาตรคงที่ (Double)
-    {
-        id: '16_4_3_num4_isochoric', topic: '16.4.3-calc', type: 'numeric_double',
-        title: 'ระบบปริมาตรคงที่',
-        inputs: [
-            { label: '1) งาน \\( W \\) \\( (\\text{Joule}) \\):' },
-            { label: '2) พลังงานภายในเปลี่ยน \\( \\Delta U \\) \\( (\\text{Joule}) \\):' }
+        id: '16_4_3_ch6_pv_area', topic: '16.4.3-concept', type: 'choice',
+        title: 'ความหมายทางกายภาพของกราฟ P-V',
+        choices: [
+            'พื้นที่ใต้กราฟระหว่างเส้นทางกระบวนการกับแกนนอน \\( (V) \\) คืองานที่ทำโดยแก๊ส',
+            'ความชันของกราฟ \\( P-V \\) แสดงถึงพลังงานภายในของระบบ',
+            'พื้นที่ใต้กราฟคือกำลังความร้อนที่สูญเสียไปในสิ่งแวดล้อม',
+            'จุดตัดแกนตั้ง \\( (P) \\) คืออุณหภูมิสัมบูรณ์ของแก๊ส'
         ],
-        text: (p) => `กระบอกสูบถูกยึดให้ **ปริมาตรคงที่** จากนั้นให้ความร้อนแก่ระบบแก๊สภายในจำนวน \\(${p.r ? `(${p.Q_base} + \\ ${p.r})` : p.Q}\\text{ J}\\) จงหางานที่แก๊สทำได้ \\( (W) \) และพลังงานภายในที่เปลี่ยนไป `,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const Q_base = r ? getSeededRandomBase('16_4_3_num4_Q', r, 200, 500, 50) : 350;
-            const Q = r ? Q_base + offset : 350;
-            const W = 0;
-            const dU = Q;
-            return {
-                params: { Q, Q_base, r: offset },
-                answers: [W.toString(), dU.toString()],
-                answersRaw: [W, dU],
-                explanation: () => `
-      1. **หางาน (W):** เมื่อปริมาตรคงที่ แก๊สไม่มีการขยายตัวหรือหดตัว ดังนั้น \\( W = 0 \\text{ J} \\)<br>
-      2. **หา \\( \\Delta U \\):** จากกฎข้อที่ 1 \\( Q = \\Delta U + W \\) เมื่อ \\( W = 0 \\) จะได้ \\( \\Delta U = Q \\)<br>
-      ดังนั้น \\( \\Delta U = +${r ? `(${Q_base} + \\ ${offset})` : Q} = +${dU} \\text{ J} \\)
-    `
-            };
-        }
+        text: () => `ในแผนภาพความดันกับปริมาตร (กราฟ P-V) พื้นที่ใต้เส้นกราฟของกระบวนการหมายถึงปริมาณทางฟิสิกส์ใด`,
+        generate: () => ({
+            params: {},
+            answers: ['พื้นที่ใต้กราฟระหว่างเส้นทางกระบวนการกับแกนนอน \\( (V) \\) คืองานที่ทำโดยแก๊ส'],
+            answersRaw: [0],
+            explanation: () => `พื้นที่ใต้กราฟ \\( P-V \\) สอดคล้องกับ \\( W = \\int P dV \\) คืองานที่ทำโดยแก๊ส`
+        })
     },
-    // อัตนัย 5: อุณหภูมิคงที่
     {
-        id: '16_4_3_num5_isothermal', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'ระบบอุณหภูมิคงที่',
-        inputs: [{ label: 'ความร้อน \\( Q \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `แก๊สอุดมคติเกิดการขยายตัวโดยรักษาระดับให้ **อุณหภูมิคงที่** ตลอดกระบวนการ ถ้าแก๊สทำงานได้ \\(${p.r ? `(${p.W_base} + \\ ${p.r})` : p.W}\\text{ J}\\) ระบบนี้จะรับหรือคายความร้อนเท่าใด`,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const W_base = r ? getSeededRandomBase('16_4_3_num5_W', r, 300, 700, 100) : 500;
-            const W = r ? W_base + offset : 500;
-            const Q = W;
-            return {
-                params: { W, W_base, r: offset },
-                answers: [Q.toString()],
-                answersRaw: [Q],
-                explanation: () => `
-      เมื่ออุณหภูมิคงที่ จะไม่มีการเปลี่ยนแปลงพลังงานภายในระบบ นั่นคือ **\\( \\Delta U = 0 \\)**<br>
-      จากกฎข้อที่ 1: \\( Q = \\Delta U + W \\) จะกลายเป็น \\( Q = 0 + W = W \\)<br>
-      ดังนั้น ความร้อน \\( Q = +${r ? `(${W_base} + \\ ${offset})` : W} = +${Q} \\text{ J} \\) (ระบบต้องรับความร้อนเข้ามาเพื่อใช้ในการทำงานทั้งหมดโดยอุณหภูมิไม่ตก)
-    `
-            };
-        }
-    },
-    // อัตนัย 6: อะเดียแบติก
-    {
-        id: '16_4_3_num6_adiabatic', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'ถูกบีบอัดอย่างรวดเร็ว (Adiabatic)',
-        inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `กระบอกสูบหุ้มฉนวนความร้อนอย่างดี ถูกออกแรงบีบอัดอย่างรวดเร็วทำให้สิ่งแวดล้อมทำงานให้แก๊ส \\(${p.r ? `(${p.W_base} + \\ ${p.r})` : p.W}\\text{ J}\\) พลังงานภายในระบบแก๊สเปลี่ยนไปเท่าใด `,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const W_base = r ? getSeededRandomBase('16_4_3_num6_W', r, 150, 400, 50) : 250;
-            const W_mag = r ? W_base + offset : 250;
-            // Q = 0, W = -W_mag (compressed)
-            const dU = W_mag; // 0 = dU + (-W_mag) => dU = W_mag
-            return {
-                params: { W: W_mag, W_base, r: offset },
-                answers: [dU.toString(), "+" + dU.toString()],
-                answersRaw: [dU],
-                explanation: () => `
-      หุ้มฉนวนและบีบอย่างรวดเร็ว หมายถึงไม่มีความร้อนเข้าหรือออก **\\( (Q = 0) \\)**<br>
-      ถูกบีบอัด หมายถึงสิ่งแวดล้อมทำงานให้ งานติดลบ **\\( W = -${r ? `(${W_base} + \\ ${offset})` : W_mag} = -${W_mag} \\text{ J} \\)**<br>
-      จาก \\( Q = \\Delta U + W \\Rightarrow 0 = \\Delta U - ${W_mag} \\)<br>
-      ดังนั้น \\( \\Delta U = +${dU} \\text{ J} \\) (อุณหภูมิของแก๊สจะสูงขึ้น)
-    `
-            };
-        }
-    },
-    // อัตนัย 7: คายความร้อน และ ถูกบีบ
-    {
-        id: '16_4_3_num7_all_neg', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'ระบบคายความร้อนและหดตัว',
-        inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `แก๊สในกระบอกสูบคายความร้อนออกสู่สิ่งแวดล้อม \\(${p.r ? `(${p.Q_base} + \\ ${p.r})` : p.Q}\\text{ J}\\) และในขณะเดียวกันปริมาตรของแก๊สหดตัวลงโดยมีสิ่งแวดล้อมทำงานให้ \\(${p.W}\\text{ J}\\) พลังงานภายในระบบมีการเปลี่ยนแปลงเท่าใด `,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const Q_base = r ? getSeededRandomBase('16_4_3_num7_Q', r, 250, 450, 50) : 400;
-            const Q_mag = r ? Q_base + offset : 400;
-            const W_mag = r ? getSeededRandomBase('16_4_3_num7_W', r, 100, 200, 50) : 150;
-            // Q is negative, W is negative
-            const dU = -Q_mag - (-W_mag);
-            return {
-                params: { Q: Q_mag, W: W_mag, Q_base, r: offset },
-                answers: [dU.toString(), (-dU).toString()],
-                answersRaw: [[dU, -dU]],
-                explanation: () => `
-      - คายความร้อน: \\( Q = -${r ? `(${Q_base} + \\ ${offset})` : Q_mag} = -${Q_mag} \\text{ J} \\)<br>
-      - หดตัว (สิ่งแวดล้อมทำงานให้): \\( W = -${W_mag} \\text{ J} \\)<br>
-      จาก \\( Q = \\Delta U + W \\Rightarrow -${Q_mag} = \\Delta U + (-${W_mag}) \\)<br>
-      \\( \\Delta U = -${Q_mag} + ${W_mag} = ${dU} \\text{ J} \\) <br>
-      **(สามารถตอบได้ทั้งค่าติดลบ หรือค่าที่เป็นบวกตามขนาดของการเปลี่ยนแปลง)**
-    `
-            };
-        }
-    },
-    // อัตนัย 8: หาอุณหภูมิที่เปลี่ยนไป
-    {
-        id: '16_4_3_num8_find_T', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'หาอุณหภูมิที่เปลี่ยนไปจาก Q',
-        inputs: [{ label: 'อุณหภูมิที่เพิ่มขึ้น \\( \\Delta T \\) (K):' }],
-        text: (p) => `ให้ความร้อนระบบ \\(${p.Q}\\text{ J}\\) โดยล็อกลูกสูบไว้ไม่ให้ขยายตัว (ปริมาตรคงที่) แก๊สฮีเลียมจำนวน \\(${p.n}\\) โมล จะมีอุณหภูมิเพิ่มขึ้นกี่เคลวิน (กำหนด \\( R = 8.3 \\text{ J/(mol K)}\\))`,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const n = r ? getSeededRandomBase('16_4_3_num8_n', r, 1, 3, 1) : 2;
-            const dT_base = r ? getSeededRandomBase('16_4_3_num8_dT', r, 10, 30, 10) : 20;
-            const exact_dT = r ? dT_base + offset : 20;
-            const Q = Math.round(1.5 * n * 8.3 * exact_dT);
-            const actual_dT = Q / (1.5 * n * 8.3);
-            return {
-                // เพิ่ม dT เพื่อความครบถ้วนของข้อมูลที่ใช้สุ่มตรวจค่าซ้ำ (ข้อ 2, 11)
-                params: { Q, n, dT: exact_dT, dT_base, r: offset },
-                answers: [actual_dT.toString(), actual_dT.toFixed(1), exact_dT.toString()],
-                answersRaw: [[actual_dT, exact_dT]],
-                explanation: () => `
-      ปริมาตรคงที่ แปลว่า งาน \\( W = 0 \\) และ \\( Q = \\Delta U \\)<br>
-      จากสมการ \\( \\Delta U = \\frac{3}{2}nR\\Delta T \\)<br>
-      แทนค่า: \\( ${Q} = \\frac{3}{2}(${n})(8.3)\\Delta T \\)<br>
-      \\( ${Q} = ${(1.5 * n * 8.3).toFixed(1)} \\Delta T \\)<br>
-      \\( \\Delta T = \\frac{${Q}}{${(1.5 * n * 8.3).toFixed(1)}} \\approx ${Number(actual_dT.toFixed(2))} \\text{ K} \\) (มีค่าตรงกับ ${exact_dT} K)
-    `
-            };
-        }
-    },
-    // อัตนัย 9: เครื่องยนต์ความร้อน
-    {
-        id: '16_4_3_num9_heat_engine', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'หลักการทำงานเครื่องยนต์ความร้อน',
-        inputs: [{ label: 'คายความร้อนทิ้ง \\( (\\text{Joule}) \\):' }],
-        text: (p) => `ใน 1 วัฏจักร เครื่องยนต์ความร้อนรับความร้อนจากแหล่งอุณหภูมิสูงมา \\(${p.r ? `(${p.Qin_base} + \\ ${p.r})` : p.Qin}\\text{ J}\\) และสามารถทำงานได้ \\(${p.W}\\text{ J}\\) เครื่องยนต์นี้จะคายความร้อนทิ้งสู่แหล่งอุณหภูมิต่ำกี่จูล`,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const Qin_base = r ? getSeededRandomBase('16_4_3_num9_Qin', r, 800, 1500, 100) : 1200;
-            const Qin = r ? Qin_base + offset : 1200;
-            const eff = r ? getSeededRandomBase('16_4_3_num9_eff', r, 3, 5, 1) / 10 : 0.4;
-            const W = Qin * eff;
-            const Qout = Qin - W;
-            return {
-                params: { Qin, W, Qin_base, r: offset },
-                answers: [Qout.toString(), Qout.toFixed(1)],
-                answersRaw: [Qout],
-                explanation: () => `
-      ในกระบวนการ 1 วัฏจักร (Cyclic) พลังงานภายในระบบเริ่มต้นและสิ้นสุดเท่าเดิม (\\( \\Delta U = 0 \\))<br>
-      พลังงานความร้อนสุทธิในระบบ \\( Q_{net} = W \\)<br>
-      \\( Q_{in} - Q_{out} = W \\Rightarrow ${r ? `(${Qin_base} + \\ ${offset})` : Qin} - Q_{out} = ${W} \\)<br>
-      ดังนั้น คายความร้อนทิ้ง \\( Q_{out} = ${Qin} - ${W} = ${Qout} \\text{ J} \\)
-    `
-            };
-        }
-    },
-    // อัตนัย 10: ความร้อน แลกเปลี่ยน งาน
-    {
-        id: '16_4_3_num10_compress_heat', topic: '16.4.3-calc', type: 'numeric_single',
-        title: 'หา \\( \\Delta U \\) แบบประยุกต์',
-        inputs: [{ label: '\\( \\Delta U \\) \\( (\\text{Joule}) \\):' }],
-        text: (p) => `ระบบได้รับความร้อน \\(${p.r ? `(${p.Q_base} + \\ ${p.r})` : p.Q}\\text{ J}\\) แต่ในขณะเดียวกันปริมาตรของแก๊สหดตัวลงโดยมีสิ่งแวดล้อมทำงานให้ \\(${p.W}\\text{ J}\\) พลังงานภายในระบบเปลี่ยนไปเท่าใด`,
-        generate: (r) => {
-            const offset = getOffsetFromR(r);
-            const Q_base = r ? getSeededRandomBase('16_4_3_num10_Q', r, 300, 600, 50) : 500;
-            const Q = r ? Q_base + offset : 500;
-            const W_mag = r ? getSeededRandomBase('16_4_3_num10_W', r, 100, 200, 25) : 150;
-            // Q = +, W = -
-            const dU = Q - (-W_mag);
-            return {
-                params: { Q, W: W_mag, Q_base, r: offset },
-                answers: [dU.toString(), "+" + dU.toString()],
-                answersRaw: [dU],
-                explanation: () => `
-      - ระบบรับความร้อน \\( Q = +${r ? `(${Q_base} + \\ ${offset})` : Q} \\text{ J} \\)<br>
-      - สิ่งแวดล้อมทำงานให้ (ปริมาตรหด) \\( W = -${W_mag} \\text{ J} \\)<br>
-      จากกฎข้อ 1: \\( Q = \\Delta U + W \\Rightarrow ${Q} = \\Delta U + (-${W_mag}) \\)<br>
-      \\( \\Delta U = ${Q} + ${W_mag} = ${dU} \\text{ J} \\)
-    `
-            };
-        }
+        id: '16_4_3_ch7_internal_energy', topic: '16.4.3-concept', type: 'choice',
+        title: 'พลังงานภายในของแก๊สอุดมคติ',
+        choices: [
+            'ขึ้นอยู่กับอุณหภูมิสัมบูรณ์ \\( (T) \\) ของระบบเพียงอย่างเดียว',
+            'ขึ้นอยู่กับปริมาตรของภาชนะบรรจุเพียงอย่างเดียว',
+            'ขึ้นอยู่กับความหนาแน่นและสีของแก๊ส',
+            'มีค่าคงที่เสมอไม่ว่าจะเพิ่มหรือลดอุณหภูมิ'
+        ],
+        text: () => `สำหรับแก๊สอุดมคติ พลังงานภายในของระบบ \\( (U) \\) ขึ้นอยู่กับตัวแปรใดเป็นหลักการสำคัญ`,
+        generate: () => ({
+            params: {},
+            answers: ['ขึ้นอยู่กับอุณหภูมิสัมบูรณ์ \\( (T) \\) ของระบบเพียงอย่างเดียว'],
+            answersRaw: [0],
+            explanation: () => `\\( U = \\frac{3}{2}N k_B T = \\frac{3}{2}nRT \\) ขึ้นอยู่กับอุณหภูมิสัมบูรณ์ \\( T \\) เท่านั้น`
+        })
     }
 ];
 // --- Practice Engine ---
@@ -1154,22 +1363,48 @@ function showPracticeFeedback(isCorrect, explainText) {
 }
 
 // --- Exam Engine ---
+
+/**
+ * Selects a theory question prioritizing questions not yet seen by the student in previous attempts.
+ */
+function selectTheoryQuestion(cls, num) {
+    const theoryPool = QUESTION_TEMPLATES.filter(q => q.topic === '16.4.3-concept');
+    const history = getTheoryChoiceHistory(cls, num);
+    let available = theoryPool.filter(q => !history.includes(q.id));
+    if (available.length === 0) {
+        // Reset history if all questions have been used
+        available = theoryPool;
+        try {
+            localStorage.setItem(`exam_choice_history_${cls}_${num}`, JSON.stringify([]));
+        } catch (e) {}
+    }
+    const chosen = available[Math.floor(Math.random() * available.length)];
+    saveTheoryChoiceToHistory(cls, num, chosen.id);
+    return chosen;
+}
+
 function startExamProcess() {
     const name = document.getElementById('exam-student-name').value.trim();
     const cls = document.getElementById('exam-student-class').value;
-    const num = document.getElementById('exam-student-no').value.trim();
-    const R_parsed = parseInt(num);
+    const numInput = document.getElementById('exam-student-no').value.trim();
+    const R_parsed = parseInt(numInput, 10);
     if (!name || !cls || isNaN(R_parsed) || R_parsed < 1 || R_parsed > 40) {
         triggerAlert("ข้อมูลไม่ครบถ้วน", "กรุณาระบุ ชื่อ ชั้นเรียน และเลขที่ \\( (1-40) \\) ให้ถูกต้องก่อนเริ่มสอบครับ", "fa-user", "bg-orange-100 text-orange-600");
         return;
     }
+    const num = String(R_parsed);
 
+    const currentAttempt = incrementStudentAttemptCount(cls, num);
     const timestamp = Date.now();
-    examSeed = `${num}_${timestamp}`; // ใช้ เลขที่ + เวลาปัจจุบัน เป็นเมล็ดสุ่มตัวเลขในการสอบรอบนี้
-    examDurationSeconds = 15 * 60;
-    examStudentInfo = { name, class: cls, number: num, seed: examSeed };
+    examSeed = `${num}_${timestamp}_att${currentAttempt}`;
+    examDurationSeconds = 15 * 60; // 15 minutes (900 seconds) locked
+    examTimeRemaining = examDurationSeconds;
+    examStudentInfo = { name, class: cls, number: num, attempt: currentAttempt, seed: examSeed };
 
-    // ฟังก์ชันสับการ์ดแบบสุ่มแท้ (Non-deterministic Shuffle)
+    // Reset cheating stats for new exam session
+    cheatingStats = { tabSwitches: 0, refreshes: 0 };
+    lastCheatEventTime = 0;
+
     const pureShuffle = (array) => {
         const arr = [...array];
         for (let i = arr.length - 1; i > 0; i--) {
@@ -1179,82 +1414,87 @@ function startExamProcess() {
         return arr;
     };
 
-    // Select 5 questions mixing topics for Thermodynamics
+    // Select 5 questions mixing all 16.4 topics:
+    // - 1 from 16.4.1 (Internal Energy)
+    // - 1 from 16.4.2 (Work & P-V graph)
+    // - 2 from 16.4.3-calc (First Law, Processes, Heat Engine & Cycle)
+    // - 1 from 16.4.3-concept (Rotated Theory Choice)
     const q_dU = QUESTION_TEMPLATES.filter(q => q.topic === '16.4.1');
     const q_W = QUESTION_TEMPLATES.filter(q => q.topic === '16.4.2');
     const q_LawCalc = QUESTION_TEMPLATES.filter(q => q.topic === '16.4.3-calc');
-    const q_LawCon = QUESTION_TEMPLATES.filter(q => q.topic === '16.4.3-concept');
 
     const shuffled_dU = pureShuffle(q_dU);
     const shuffled_W = pureShuffle(q_W);
     const shuffled_LawCalc = pureShuffle(q_LawCalc);
-    const shuffled_LawCon = pureShuffle(q_LawCon);
+    const theoryQ = selectTheoryQuestion(cls, num);
 
     let selectedTemplates = [
         shuffled_dU[0],
         shuffled_W[0],
-        shuffled_W[1], // Have a high chance of testing both expansion and compression
         shuffled_LawCalc[0],
-        shuffled_LawCon[0]
+        shuffled_LawCalc[1] || shuffled_LawCalc[0],
+        theoryQ
     ];
 
-    // สุ่มสลับลำดับข้อสอบทั้ง 5 ข้อ เพื่อให้ตำแหน่งของโจทย์เปลี่ยนไปในแต่ละรอบ
+    // Shuffle the 5 questions so positions are randomized
     selectedTemplates = pureShuffle(selectedTemplates);
 
     currentExamQuestions = selectedTemplates.map((template, index) => {
         let instance = null;
         let attempts = 0;
         const history = getHistory();
-        
+
         while (attempts < 100) {
             attempts++;
-            // สร้าง seed ที่มีเอกลักษณ์เฉพาะข้อและรัน เพื่อให้สุ่มได้จริงไม่ซ้ำ (ข้อ 1, 6, 7)
-            const seed = `${num}_${timestamp}_${template.id}_${attempts}`;
+            const seed = `${num}_${timestamp}_${template.id}_${attempts}_att${currentAttempt}`;
             instance = template.generate(seed);
-            
+
             const vals = getActiveParamValues(instance.params);
             if (vals.length > 0) {
-                // ป้องกันตัวแปรซ้ำภายในข้อเดียวกัน (ข้อ 2)
                 if (hasDuplicateVariables(instance.params)) {
                     continue;
                 }
-                
-                // ป้องกันการสุ่มชุดตัวเลขซ้ำกับรอบก่อนหน้า (ข้อ 3, 4, 5)
                 const key = generateUniqueKey(template.id, instance.params);
                 if (history.includes(key)) {
                     continue;
                 }
-                
                 addToHistory(key);
             }
-            break; // สุ่มได้ผ่านเกณฑ์
+            break;
         }
 
         const choices = template.type === 'choice' ? pureShuffle(template.choices) : [];
         return {
-            id: template.id, topic: template.topic, type: template.type, title: template.title,
-            text: template.text(instance.params), inputs: template.inputs || [], choices: choices,
-            // บันทึกคำตอบและคำอธิบายเฉลยที่สุ่มได้จริงในชุดเดียวกัน (ข้อ 11, 12)
+            id: template.id,
+            topic: template.topic,
+            type: template.type,
+            title: template.title,
+            text: template.text(instance.params),
+            inputs: template.inputs || [],
+            choices: choices,
             answers: instance.answers,
             answersRaw: instance.answersRaw,
             explanationText: instance.explanation()
         };
     });
 
-    document.getElementById('lbl-exam-user-info').innerHTML = `${name} (ม.6/${cls} เลขที่ ${num})`;
+    const userInfoEl = document.getElementById('lbl-exam-user-info');
+    if (userInfoEl) {
+        userInfoEl.innerHTML = `${name} (ม.6/${cls} เลขที่ ${num})`;
+    }
+    const attemptBadge = document.getElementById('badge-exam-attempt');
+    if (attemptBadge) {
+        attemptBadge.innerText = `สอบครั้งที่ ${currentAttempt}`;
+    }
 
     renderExamLiveDOM();
 
     examStartTimestamp = Date.now();
     examDeadlineTimestamp = examStartTimestamp + (examDurationSeconds * 1000);
-    examTimeRemaining = examDurationSeconds;
     examIsActive = true;
     examSubmissionInProgress = false;
 
-    sessionStorage.setItem(EXAM_STATE_KEY, JSON.stringify({
-        examQuestions: currentExamQuestions, studentInfo: examStudentInfo, examStartTimestamp, examDeadlineTimestamp, examDurationSeconds
-    }));
-
+    saveExamState();
     setupExamLocks();
     showSection('exam-live');
     startExamTimer();
@@ -1265,42 +1505,57 @@ function setupExamLocks() {
     document.body.classList.add('exam-locked');
     window.addEventListener('beforeunload', handleExamBeforeUnload);
 }
+
 function releaseExamLocks() {
     examExitGuardEnabled = false;
     document.body.classList.remove('exam-locked');
     window.removeEventListener('beforeunload', handleExamBeforeUnload);
 }
-function handleExamBeforeUnload(e) { if (examIsActive) { e.preventDefault(); e.returnValue = ''; } }
 
-function renderExamLiveDOM() {
+function handleExamBeforeUnload(e) {
+    if (examIsActive) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
+}
+
+function renderExamLiveDOM(savedAnswers = null) {
     const container = document.getElementById('exam-questions-container');
     container.innerHTML = '';
+
     currentExamQuestions.forEach((q, idx) => {
         let inputHTML = '';
+        const savedAns = savedAnswers ? savedAnswers[idx] : null;
+
         if (q.type === 'choice') {
             inputHTML += `<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">`;
             q.choices.forEach((c, cIdx) => {
+                const isChecked = savedAns === c ? 'checked' : '';
                 inputHTML += `<label class="flex items-center gap-3 bg-slate-50 border border-slate-200 hover:bg-slate-100 p-4 rounded-xl cursor-pointer transition">
-              <input type="radio" name="exam-q${idx}" value="${c}" class="w-4 h-4 text-orange-600 focus:ring-orange-500">
+              <input type="radio" name="exam-q${idx}" value="${c}" ${isChecked} onchange="debouncedAutoSave()" class="w-4 h-4 text-orange-600 focus:ring-orange-500">
               <span class="text-sm text-slate-800">${c}</span>
             </label>`;
             });
             inputHTML += `</div>`;
         } else if (q.type === 'numeric_single') {
+            const val = (savedAns && savedAns[0]) ? savedAns[0] : '';
             inputHTML += `<div class="mt-4"><label class="block text-xs font-bold text-slate-500 mb-1">${q.inputs[0].label}</label>
-            <input type="text" id="exam-q${idx}-val1" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-sm"></div>`;
+            <input type="text" id="exam-q${idx}-val1" value="${val}" oninput="debouncedAutoSave()" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-sm"></div>`;
         } else if (q.type === 'numeric_double') {
+            const val1 = (savedAns && savedAns[0]) ? savedAns[0] : '';
+            const val2 = (savedAns && savedAns[1]) ? savedAns[1] : '';
             inputHTML += `<div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label class="block text-xs font-bold text-slate-500 mb-1">${q.inputs[0].label}</label>
-              <input type="text" id="exam-q${idx}-val1" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-sm">
+              <input type="text" id="exam-q${idx}-val1" value="${val1}" oninput="debouncedAutoSave()" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-sm">
             </div>
             <div>
               <label class="block text-xs font-bold text-slate-500 mb-1">${q.inputs[1].label}</label>
-              <input type="text" id="exam-q${idx}-val2" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-sm">
+              <input type="text" id="exam-q${idx}-val2" value="${val2}" oninput="debouncedAutoSave()" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-sm">
             </div>
           </div>`;
         }
+
         container.innerHTML += `<div class="bg-white rounded-2xl p-6 md:p-8 shadow-sm border border-slate-200">
           <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
             <span class="font-bold text-slate-800">ข้อที่ ${idx + 1}: ${q.title}</span>
@@ -1310,6 +1565,7 @@ function renderExamLiveDOM() {
           ${inputHTML}
         </div>`;
     });
+
     queueTypeset(container);
 }
 
@@ -1318,8 +1574,15 @@ function startExamTimer() {
     examTimerInterval = setInterval(() => {
         if (!examIsActive) return;
         examTimeRemaining = Math.max(0, Math.ceil((examDeadlineTimestamp - Date.now()) / 1000));
-        document.getElementById('exam-timer-display').innerText = formatExamTime(examTimeRemaining);
-        if (examTimeRemaining < 60) document.getElementById('exam-timer-display').classList.add('text-red-400');
+        const timerDisplay = document.getElementById('exam-timer-display');
+        if (timerDisplay) {
+            timerDisplay.innerText = formatExamTime(examTimeRemaining);
+            if (examTimeRemaining < 60) {
+                timerDisplay.classList.add('text-red-400');
+            } else {
+                timerDisplay.classList.remove('text-red-400');
+            }
+        }
 
         if (examTimeRemaining <= 0) {
             clearInterval(examTimerInterval);
@@ -1335,12 +1598,12 @@ function getExamAnswers() {
             const chk = document.querySelector(`input[name="exam-q${idx}"]:checked`);
             return chk ? chk.value : null;
         } else if (q.type === 'numeric_single') {
-            return [document.getElementById(`exam-q${idx}-val1`).value];
+            const el = document.getElementById(`exam-q${idx}-val1`);
+            return el ? [el.value] : null;
         } else if (q.type === 'numeric_double') {
-            return [
-                document.getElementById(`exam-q${idx}-val1`).value,
-                document.getElementById(`exam-q${idx}-val2`).value
-            ];
+            const el1 = document.getElementById(`exam-q${idx}-val1`);
+            const el2 = document.getElementById(`exam-q${idx}-val2`);
+            return (el1 && el2) ? [el1.value, el2.value] : null;
         }
         return null;
     });
@@ -1349,7 +1612,7 @@ function getExamAnswers() {
 function confirmSubmitExam() {
     const answers = getExamAnswers();
     const uncomplete = answers.some(a => !a || (Array.isArray(a) && (a.some(val => !val.trim()))));
-    const msg = uncomplete ? "คุณยังทำข้อสอบไม่ครบทุกข้อ ยืนยันที่จะส่งข้อสอบเลยหรือไม่?" : "คุณทำข้อสอบครบแล้ว ยืนยันต้องการส่งข้อสอบหรือไม่?";
+    const msg = uncomplete ? "คุณยังทำข้อสอบไม่ครบทุกข้อ ยืนยันที่จะส่งข้อสอบเลยหรือไม่?" : "คุณทำข้อสอบครบทั้ง 5 ข้อแล้ว ยืนยันต้องการส่งข้อสอบหรือไม่?";
 
     const m = document.getElementById('modal-confirm');
     const c = document.getElementById('modal-confirm-card');
@@ -1381,13 +1644,11 @@ function submitExam(timeExpired = false) {
     const answers = getExamAnswers();
     let total_score = 0;
     const gradedResults = [];
-    const R = examStudentInfo.seed || parseInt(examStudentInfo.number) || 1;
 
     currentExamQuestions.forEach((q, idx) => {
         const userAns = answers[idx];
-
-        // ตรวจคำตอบเทียบกับเฉลยในโครงสร้างข้อสอบที่สุ่มและจัดเก็บไว้โดยตรง (ข้อ 11, 12)
         let isCorrect = false;
+
         if (q.type === 'choice') {
             isCorrect = userAns === q.answers[0];
         } else if (q.type === 'numeric_single') {
@@ -1401,21 +1662,41 @@ function submitExam(timeExpired = false) {
         const score = isCorrect ? 2.0 : 0.0;
         total_score += score;
         gradedResults.push({
-            idx, isCorrect, score, userAns,
+            idx,
+            isCorrect,
+            score,
+            userAns,
             expectedAnswers: q.answers,
             explanationText: q.explanationText
         });
     });
 
-    const elapsed = timeExpired ? examDurationSeconds : (examDurationSeconds - examTimeRemaining);
+    const elapsed = timeExpired ? examDurationSeconds : Math.max(1, examDurationSeconds - examTimeRemaining);
     const timeStr = `${Math.floor(elapsed / 60)} นาที ${elapsed % 60} วินาที`;
 
     const payload = {
-        score: total_score, timeTaken: timeStr, studentInfo: examStudentInfo,
-        gradedResults, examQuestions: currentExamQuestions, date: new Date().toLocaleDateString('th-TH')
+        score: total_score,
+        maxScore: 10,
+        passed: total_score >= 5,
+        timeTaken: timeStr,
+        studentInfo: examStudentInfo,
+        attempt: examStudentInfo.attempt || 1,
+        cheatingStats: { ...cheatingStats },
+        gradedResults,
+        examQuestions: currentExamQuestions,
+        timestamp: Date.now(),
+        date: new Date().toLocaleDateString('th-TH')
     };
-    localStorage.setItem('last_exam_results_16_4', JSON.stringify(payload));
-    sessionStorage.removeItem(EXAM_STATE_KEY);
+
+    // Save to both key formats for backward compatibility and requirement
+    try {
+        localStorage.setItem('last_exam_results_16_4', JSON.stringify(payload));
+        localStorage.setItem('last_exam_results', JSON.stringify(payload));
+        localStorage.removeItem(EXAM_STATE_KEY);
+        localStorage.removeItem(EXAM_STATE_FALLBACK_KEY);
+    } catch (e) {
+        console.error('Failed to store results or clear session', e);
+    }
 
     updateLatestScore();
     showSection('exam-result');
@@ -1424,30 +1705,83 @@ function submitExam(timeExpired = false) {
 
 function renderExamResults(data) {
     document.getElementById('lbl-res-student-name').innerText = data.studentInfo.name;
-    document.getElementById('lbl-res-student-meta').innerHTML = `(ม.6/${data.studentInfo.class} เลขที่ ${data.studentInfo.number})`;
+    document.getElementById('lbl-res-student-meta').innerHTML = `ม.6/${data.studentInfo.class} เลขที่ ${data.studentInfo.number}`;
     document.getElementById('lbl-res-time-elapsed').innerText = data.timeTaken;
     document.getElementById('lbl-res-finished-at').innerText = data.date;
 
+    const attemptBadge = document.getElementById('lbl-res-attempt-badge');
+    if (attemptBadge) {
+        attemptBadge.innerText = `สอบครั้งที่ ${data.attempt || 1}`;
+    }
+
     document.getElementById('lbl-res-total-score').innerText = data.score;
     const circle = document.getElementById('res-circle-progress');
-    circle.style.strokeDashoffset = 439.8 - (data.score / 10) * 439.8;
+    if (circle) {
+        circle.style.strokeDashoffset = 439.8 - (data.score / 10) * 439.8;
+    }
 
+    // Feedback message
     const fb = document.getElementById('lbl-res-badge-feedback');
-    if (data.score >= 8) fb.innerHTML = `<span class="text-emerald-600 font-bold"><i class="fa-solid fa-star"></i> ยอดเยี่ยม! เข้าใจกฎของอุณหพลศาสตร์ได้ดีมาก</span>`;
-    else if (data.score >= 5) fb.innerHTML = `<span class="text-orange-600 font-bold"><i class="fa-solid fa-thumbs-up"></i> ดี! ผ่านเกณฑ์ ลองดูเฉลยเพื่อเก็บรายละเอียดเครื่องหมายนะ</span>`;
-    else fb.innerHTML = `<span class="text-red-600 font-bold"><i class="fa-solid fa-book"></i> พยายามอีกนิด ทบทวนเรื่องการกำหนดเครื่องหมาย (+ / -) นะครับ</span>`;
+    if (data.score >= 5) {
+        fb.className = "text-center p-4 rounded-xl mb-6 border border-emerald-200 bg-emerald-50 text-sm";
+        fb.innerHTML = `<span class="text-emerald-700 font-bold flex items-center justify-center gap-2">
+            <i class="fa-solid fa-circle-check text-emerald-600 text-lg"></i>
+            🎉 ยินดีด้วย! คุณสอบผ่านเกณฑ์ (ได้คะแนน ${data.score}/10 หรือ ${(data.score * 10)}%)
+        </span>`;
+    } else {
+        fb.className = "text-center p-4 rounded-xl mb-6 border border-red-200 bg-red-50 text-sm";
+        fb.innerHTML = `<span class="text-red-700 font-bold flex items-center justify-center gap-2">
+            <i class="fa-solid fa-circle-xmark text-red-600 text-lg"></i>
+            ⚠️ คุณยังไม่ผ่านเกณฑ์ (ได้คะแนน ${data.score}/10) เกณฑ์ผ่านคือ 5/10 ขึ้นไป กรุณาทบทวนเนื้อหาและสอบแก้ตัวใหม่
+        </span>`;
+    }
+
+    // Anti-Cheat / Integrity Summary Card
+    const cheatCard = document.getElementById('exam-cheat-summary-card');
+    if (cheatCard) {
+        const switches = data.cheatingStats ? (data.cheatingStats.tabSwitches || 0) : 0;
+        const refreshes = data.cheatingStats ? (data.cheatingStats.refreshes || 0) : 0;
+
+        if (switches > 0 || refreshes > 0) {
+            cheatCard.innerHTML = `
+            <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 md:p-5 flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-xl shrink-0">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <div class="space-y-1 text-sm text-amber-900">
+                    <h5 class="font-bold flex items-center gap-2">
+                        ข้อสังเกตพฤติกรรมระหว่างการสอบ
+                    </h5>
+                    <p class="text-xs text-amber-800 leading-relaxed">
+                        ระบบตรวจพบ: สลับหน้าจอ/เปิดแท็บอื่น <strong>${switches} ครั้ง</strong>, รีเฟรชหน้าจอ <strong>${refreshes} ครั้ง</strong>
+                    </p>
+                </div>
+            </div>`;
+        } else {
+            cheatCard.innerHTML = `
+            <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 md:p-5 flex items-center gap-4">
+                <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl shrink-0">
+                    <i class="fa-solid fa-shield-check"></i>
+                </div>
+                <div class="text-sm text-emerald-900 font-bold">
+                    ✅ การสอบมีความซื่อสัตย์ ไม่พบการสลับหน้าจอหรือเปิดแท็บอื่น
+                </div>
+            </div>`;
+        }
+    }
 
     const tbody = document.getElementById('exam-result-tbody');
     const sols = document.getElementById('exam-solutions-container');
-    tbody.innerHTML = ''; sols.innerHTML = '';
+    tbody.innerHTML = '';
+    sols.innerHTML = '';
 
     data.gradedResults.forEach((grad, i) => {
         const q = data.examQuestions[i];
         const status = grad.isCorrect
-            ? `<span class="text-emerald-500 font-bold"><i class="fa-solid fa-check"></i> 2.0</span>`
+            ? `<span class="text-emerald-600 font-bold"><i class="fa-solid fa-check"></i> 2.0</span>`
             : `<span class="text-red-500 font-bold"><i class="fa-solid fa-xmark"></i> 0.0</span>`;
 
-        tbody.innerHTML += `<tr class="bg-white">
+        tbody.innerHTML += `<tr class="bg-white hover:bg-slate-50 transition">
           <td class="px-5 py-3 font-medium text-center">${i + 1}</td>
           <td class="px-5 py-3 text-slate-700">${q.title}</td>
           <td class="px-5 py-3 text-center">2.0</td>
@@ -1456,7 +1790,7 @@ function renderExamResults(data) {
 
         let uAns = 'ไม่ได้ตอบ';
         if (q.type === 'choice') uAns = grad.userAns || uAns;
-        else if (grad.userAns && grad.userAns[0]) uAns = grad.userAns[0];
+        else if (grad.userAns && grad.userAns[0]) uAns = grad.userAns.join(' , ');
 
         sols.innerHTML += `<div class="bg-white p-5 rounded-xl border border-slate-200">
           <h5 class="font-bold text-slate-800 mb-2">ข้อ ${i + 1}: ${q.title}</h5>
@@ -1468,6 +1802,7 @@ function renderExamResults(data) {
           <div class="text-xs text-slate-700 bg-orange-50/50 p-3 rounded-lg math-font border border-orange-100">${grad.explanationText}</div>
         </div>`;
     });
+
     queueTypeset(document.getElementById('sec-exam-result'));
 }
 
@@ -1479,19 +1814,32 @@ function toggleExamSolutionBox() {
 }
 
 function updateLatestScore() {
-    // ป้องกันการเข้าถึง localStorage ระหว่าง SSR ใน Next.js (ข้อ 8, 9)
     if (typeof window === 'undefined') return;
     try {
-        const saved = localStorage.getItem('last_exam_results_16_4');
+        const saved = localStorage.getItem('last_exam_results_16_4') || localStorage.getItem('last_exam_results');
         const badge = document.getElementById('latest-score-badge');
         if (saved && badge) {
             const data = JSON.parse(saved);
             const scoreLbl = document.getElementById('lbl-last-score');
+            const statusBadge = document.getElementById('lbl-last-status-badge');
+
             if (scoreLbl) {
-                scoreLbl.innerHTML = `${data.score}/10 \\( (\\text{${data.studentInfo.name}}) \\)`;
-                badge.classList.remove('hidden');
-                queueTypeset(scoreLbl);
+                const sName = (data.studentInfo && data.studentInfo.name) ? data.studentInfo.name : 'ผู้สอบ';
+                scoreLbl.innerHTML = `${data.score}/10 \\( (\\text{${sName}}) \\)`;
             }
+
+            if (statusBadge) {
+                if (data.score >= 5) {
+                    statusBadge.className = "px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-300";
+                    statusBadge.innerText = "สอบผ่าน";
+                } else {
+                    statusBadge.className = "px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700 border border-rose-300";
+                    statusBadge.innerText = "ต้องสอบใหม่";
+                }
+            }
+
+            badge.classList.remove('hidden');
+            if (scoreLbl) queueTypeset(scoreLbl);
         }
     } catch (e) {
         console.error('Failed to update latest score badge', e);
@@ -1499,10 +1847,9 @@ function updateLatestScore() {
 }
 
 function showLatestResultModal() {
-    // ป้องกันการเข้าถึง localStorage ระหว่าง SSR ใน Next.js (ข้อ 8, 9)
     if (typeof window === 'undefined') return;
     try {
-        const saved = localStorage.getItem('last_exam_results_16_4');
+        const saved = localStorage.getItem('last_exam_results_16_4') || localStorage.getItem('last_exam_results');
         if (saved) {
             showSection('exam-result');
             renderExamResults(JSON.parse(saved));
@@ -1512,36 +1859,127 @@ function showLatestResultModal() {
     }
 }
 
-// --- On Load Init ---
-window.onload = () => {
+function updateQuestionPoolCount() {
+    const totalQuestions = QUESTION_TEMPLATES.length;
+    const totalCountEl = document.getElementById('total-count');
+    if (totalCountEl) totalCountEl.innerText = totalQuestions;
+    const poolCountEl = document.getElementById('pool-count');
+    if (poolCountEl) poolCountEl.innerText = totalQuestions;
+}
+
+function checkAndRestorePendingExam() {
+    if (typeof window === 'undefined') return false;
+    try {
+        const saved = localStorage.getItem(EXAM_STATE_KEY) || localStorage.getItem(EXAM_STATE_FALLBACK_KEY);
+        if (!saved) return false;
+
+        const s = JSON.parse(saved);
+        if (s.examDeadlineTimestamp && s.examDeadlineTimestamp > Date.now() && Array.isArray(s.examQuestions) && s.examQuestions.length > 0) {
+            currentExamQuestions = s.examQuestions;
+            examStudentInfo = s.studentInfo || {};
+            examSeed = examStudentInfo.seed || null;
+            examStartTimestamp = s.examStartTimestamp || (Date.now() - 1000);
+            examDeadlineTimestamp = s.examDeadlineTimestamp;
+            examDurationSeconds = s.examDurationSeconds || 900;
+            examTimeRemaining = Math.max(0, Math.ceil((examDeadlineTimestamp - Date.now()) / 1000));
+
+            cheatingStats = s.cheatingStats || { tabSwitches: 0, refreshes: 0 };
+            cheatingStats.refreshes = (cheatingStats.refreshes || 0) + 1;
+
+            examIsActive = true;
+            examSubmissionInProgress = false;
+
+            const userInfoEl = document.getElementById('lbl-exam-user-info');
+            if (userInfoEl) {
+                userInfoEl.innerHTML = `${examStudentInfo.name} (ม.6/${examStudentInfo.class} เลขที่ ${examStudentInfo.number})`;
+            }
+            const attemptBadge = document.getElementById('badge-exam-attempt');
+            if (attemptBadge) {
+                attemptBadge.innerText = `สอบครั้งที่ ${examStudentInfo.attempt || 1}`;
+            }
+
+            renderExamLiveDOM(s.userAnswers || null);
+            setupExamLocks();
+            showSection('exam-live');
+            startExamTimer();
+            saveExamState();
+            return true;
+        } else {
+            localStorage.removeItem(EXAM_STATE_KEY);
+            localStorage.removeItem(EXAM_STATE_FALLBACK_KEY);
+        }
+    } catch (e) {
+        localStorage.removeItem(EXAM_STATE_KEY);
+        localStorage.removeItem(EXAM_STATE_FALLBACK_KEY);
+    }
+    return false;
+}
+
+/**
+ * Initialize guards for student roll number input
+ */
+function initStudentInputGuards() {
+    const studentNoEl = document.getElementById('exam-student-no');
+    if (!studentNoEl) return;
+
+    // Prevent typing negative sign '-', plus '+', decimal '.', or exponential 'e'/'E'
+    studentNoEl.addEventListener('keydown', (e) => {
+        if (['-', '+', 'e', 'E', '.'].includes(e.key)) {
+            e.preventDefault();
+        }
+    });
+
+    // Sanitize input when pasting or typing to disallow negative numbers
+    studentNoEl.addEventListener('input', () => {
+        let val = studentNoEl.value;
+        if (/[^0-9]/.test(val)) {
+            val = val.replace(/[^0-9]/g, '');
+            studentNoEl.value = val;
+        }
+        if (val !== '') {
+            const num = parseInt(val, 10);
+            if (num > 40) {
+                studentNoEl.value = 40;
+            }
+        }
+    });
+
+    // Enforce 1-40 range when field loses focus or changes
+    studentNoEl.addEventListener('change', () => {
+        const val = studentNoEl.value.trim();
+        if (val !== '') {
+            const num = parseInt(val, 10);
+            if (isNaN(num) || num < 1) {
+                studentNoEl.value = 1;
+            } else if (num > 40) {
+                studentNoEl.value = 40;
+            } else {
+                studentNoEl.value = num;
+            }
+        }
+    });
+}
+
+/**
+ * Consolidated Application Lifecycle Entry Point
+ */
+function initApp() {
+    initAntiCheatListeners();
+    initStudentInputGuards();
     updateLatestScore();
     switchReviewTab('16-4-1');
-    queueTypeset(document.body);
+    updateQuestionPoolCount();
 
-    const activeSession = sessionStorage.getItem(EXAM_STATE_KEY);
-    if (activeSession) {
-        try {
-            const s = JSON.parse(activeSession);
-            if (s.examDeadlineTimestamp > Date.now()) {
-                currentExamQuestions = s.examQuestions;
-                examStudentInfo = s.studentInfo;
-                examSeed = s.studentInfo.seed || null;
-                examDeadlineTimestamp = s.examDeadlineTimestamp;
-                examDurationSeconds = s.examDurationSeconds;
-                examIsActive = true;
-                document.getElementById('lbl-exam-user-info').innerHTML = `${s.studentInfo.name} (ม.6/${s.studentInfo.class} เลขที่ ${s.studentInfo.number})`;
-                renderExamLiveDOM();
-                setupExamLocks();
-                showSection('exam-live');
-                startExamTimer();
-            } else {
-                sessionStorage.removeItem(EXAM_STATE_KEY);
-            }
-        } catch (e) { sessionStorage.removeItem(EXAM_STATE_KEY); }
+    const restored = checkAndRestorePendingExam();
+    if (!restored) {
+        queueTypeset(document.body);
     }
+}
 
-    // นับจำนวนโจทย์ทั้งหมดใน array QUESTION_TEMPLATES
-    const totalQuestions = QUESTION_TEMPLATES.length;
-    // อัปเดตตัวเลขไปยัง HTML
-    document.getElementById('total-count').innerText = totalQuestions;
-};
+// Start application when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+} else {
+    initApp();
+}
+
